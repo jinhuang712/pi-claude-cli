@@ -9,7 +9,6 @@ import {
   MODEL,
   ROOT,
   RpcHost,
-  configureHostIsolation,
   hostArgs,
   hostEnvironment,
   managedPiStartupOutput,
@@ -27,12 +26,12 @@ assert.ok(
 );
 const smokeHost = process.env.PI_CLAUDE_SMOKE_HOST;
 assert.ok(
-  !smokeHost || ["pi", "omp"].includes(smokeHost),
+  !smokeHost || ["pi"].includes(smokeHost),
   "Invalid smoke host selection",
 );
-for (const kind of ["pi", "omp"])
+for (const kind of ["pi"])
   test(
-    `${kind}: ${sourceSmoke ? "source" : "installed managed"} Claude package executes real native tools and OMP background completion`,
+    `${kind}: ${sourceSmoke ? "source" : "installed managed"} Claude package executes real native tools`,
     {
       skip:
         (!sourceSmoke && process.env.PI_CLAUDE_INSTALLED_E2E !== "1") ||
@@ -43,10 +42,7 @@ for (const kind of ["pi", "omp"])
       const driver = process.env.PI_CLAUDE_DRIVER ?? "cli";
       assert.ok(["cli", "sdk"].includes(driver));
       const agentRoot = join(homedir(), `.${kind}`, "agent");
-      const installRoot =
-        kind === "pi"
-          ? join(agentRoot, "npm")
-          : join(homedir(), ".omp", "plugins");
+      const installRoot = join(agentRoot, "npm");
       const packageRoot = sourceSmoke
         ? ROOT
         : join(installRoot, "node_modules/@ramarivera/pi-claude-cli");
@@ -77,17 +73,11 @@ for (const kind of ["pi", "omp"])
           ),
           "Managed Pi settings must pin the installed release",
         );
-      } else if (!sourceSmoke) {
-        const manifest = JSON.parse(
-          readFileSync(join(installRoot, "package.json"), "utf8"),
-        );
-        assert.equal(manifest.dependencies[pkg.name], pkg.version);
       }
       const sandbox = scratchDirectory("i-");
       mkdirSync(join(sandbox, "t"), { mode: 0o700 });
       const fixture = `release-${randomUUID()}`;
       writeFileSync(join(sandbox, "release-fixture.txt"), fixture + "\n");
-      configureHostIsolation(kind, sandbox);
       const nonce = `nonce-${randomUUID()}`;
       const env = hostEnvironment(kind, driver, sandbox, nonce);
       if (!sourceSmoke) {
@@ -151,8 +141,6 @@ for (const kind of ["pi", "omp"])
           registered.length,
           "Installed provider must register unique model IDs",
         );
-        // OMP's RPC picker filters enabledModels; the CLI can select Haiku
-        // from the complete registry even when the managed picker excludes it.
         const selected = (await host.command("get_state")).model;
         assert.equal(selected.provider, "pi-claude-cli");
         assert.equal(selected.id, MODEL);
@@ -174,23 +162,6 @@ for (const kind of ["pi", "omp"])
           .trim()
           .split("\n")
           .map(JSON.parse);
-        if (kind === "omp") {
-          assert.ok(
-            events.some((event) => event.type === "steering-status-observer"),
-            "Native status observer wasn't installed",
-          );
-          const footerRows = events.filter(
-            (event) =>
-              ["runtime-status", "steering-status"].includes(event.type) &&
-              event.data.hasText,
-          );
-          assert.equal(
-            footerRows.length,
-            0,
-            "Installed Claude runtime wrote status logs below the prompt bar",
-          );
-          receipt.runtimeStatusRows = footerRows.length;
-        }
         const nativeCalls = events
           .filter((event) => event.type === "tool-start")
           .map((event) => event.data.toolName);
@@ -221,132 +192,6 @@ for (const kind of ["pi", "omp"])
           "Actual selected Claude transport and session identity missing",
         );
         receipt.result = { text, sentinelCalls: calls.length, nativeCalls };
-        if (kind === "omp") {
-          const sessionIds = new Set(
-            responses.map((event) => event.data.claudeSessionId),
-          );
-          assert.equal(sessionIds.size, 1);
-          const backgroundMarker = `BACKGROUND_${randomUUID().replaceAll("-", "")}`;
-          const command = `while [ ! -f background-release.signal ]; do sleep 0.1; done; printf '%s\\n' '${backgroundMarker}'`;
-          const since = host.frames.length;
-          const backgroundPromptId = host.send("prompt", {
-            message: `Use the native bash tool exactly once with async:true, timeout:30 and command ${JSON.stringify(command)}. Don't poll or call any other tools. Briefly acknowledge starting the job. When its completion is delivered, report the exact output marker from that notification.`,
-          });
-          await host.wait(
-            () =>
-              host.frames
-                .slice(since)
-                .find(
-                  (frame) =>
-                    frame.type === "message_end" &&
-                    frame.message?.role === "assistant" &&
-                    frame.message.stopReason === "stop",
-                ),
-            "foreground answer before background completion",
-            90000,
-          );
-          writeFileSync(
-            join(sandbox, "background-release.signal"),
-            "release\n",
-            { mode: 0o600 },
-          );
-          await host.settled(kind, backgroundPromptId, since);
-          const messages = (await host.command("get_messages")).messages;
-          const notifications = messages.filter(
-            (message) =>
-              message.role === "custom" &&
-              message.customType === "async-result",
-          );
-          assert.equal(
-            notifications.length,
-            1,
-            "Native background job must deliver one real async-result notification",
-          );
-          const { text: backgroundText } = await host.command(
-            "get_last_assistant_text",
-          );
-          assert.ok(
-            backgroundText.includes(backgroundMarker),
-            "Native background completion wasn't answered",
-          );
-          const afterBackground = readFileSync(env.PCC_E2E_OBSERVATIONS, "utf8")
-            .trim()
-            .split("\n")
-            .map(JSON.parse);
-          assert.equal(
-            afterBackground.filter(
-              (event) =>
-                event.type === "tool-start" && event.data.toolName === "bash",
-            ).length,
-            1,
-          );
-          assert.equal(
-            afterBackground.filter(
-              (event) =>
-                event.type === "tool-start" &&
-                !["read", "pcc_sentinel", "bash"].includes(event.data.toolName),
-            ).length,
-            0,
-          );
-          assert.ok(
-            afterBackground
-              .filter(
-                (event) =>
-                  event.type === "response" && event.data.driver === driver,
-              )
-              .every((event) => sessionIds.has(event.data.claudeSessionId)),
-            "Background completion rebuilt the resident Claude query",
-          );
-          assert.equal(
-            host.frames
-              .slice(since)
-              .filter(
-                (frame) =>
-                  frame.type === "message_end" &&
-                  frame.message?.role === "assistant" &&
-                  frame.message.stopReason === "error",
-              ).length,
-            0,
-            "Background completion produced a native assistant error",
-          );
-          const recalled = await host.prompt(
-            kind,
-            "No tools. Repeat only the background job's exact output marker from the last notification.",
-          );
-          assert.ok(
-            recalled.includes(backgroundMarker),
-            "Follow-up lost native background notification history",
-          );
-          const finalEvents = readFileSync(env.PCC_E2E_OBSERVATIONS, "utf8")
-            .trim()
-            .split("\n")
-            .map(JSON.parse);
-          assert.equal(
-            finalEvents.filter(
-              (event) =>
-                ["runtime-status", "steering-status"].includes(event.type) &&
-                event.data.hasText,
-            ).length,
-            0,
-          );
-          assert.ok(
-            finalEvents
-              .filter(
-                (event) =>
-                  event.type === "response" && event.data.driver === driver,
-              )
-              .every((event) => sessionIds.has(event.data.claudeSessionId)),
-            "Follow-up rebuilt the resident Claude query",
-          );
-          receipt.backgroundCompletion = {
-            nativeNotifications: notifications.length,
-            nativeBashCalls: 1,
-            answered: true,
-            remembered: true,
-            resident: true,
-            runtimeStatusRows: 0,
-          };
-        }
         await host.command("new_session");
         receipt.transportCleanup = await host.transportIdle(
           join(sandbox, "t"),

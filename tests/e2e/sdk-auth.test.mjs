@@ -5,7 +5,6 @@ import test from "node:test";
 import {
   ROOT,
   RpcHost,
-  configureHostIsolation,
   hostArgs,
   hostEnvironment,
   preflight,
@@ -18,7 +17,7 @@ import {
 // rejection remains a failed test, never an expected-error pass or fallback.
 const enabled = process.env.PI_CLAUDE_SDK_AUTH_E2E === "1";
 const kind = process.env.PI_CLAUDE_SDK_AUTH_HOST ?? "pi";
-assert.ok(["pi", "omp"].includes(kind), "Invalid SDK auth host");
+assert.ok(["pi"].includes(kind), "Invalid SDK auth host");
 
 for (const promptShape of ["custom", "native"])
   test(
@@ -27,7 +26,6 @@ for (const promptShape of ["custom", "native"])
     async (context) => {
       const sandbox = scratchDirectory("a-");
       mkdirSync(join(sandbox, "t"), { mode: 0o700 });
-      configureHostIsolation(kind, sandbox);
       const env = hostEnvironment(kind, "sdk", sandbox, "AUTH_DIFFERENTIAL");
       assert.equal(env.PI_CLAUDE_AUTH, "claude-login");
       env.PCC_E2E_BOUNDARY = "1";

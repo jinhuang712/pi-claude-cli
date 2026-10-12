@@ -7,7 +7,7 @@ import {
 export { readRuntimeConfiguration } from "./config.js";
 export type { RuntimeConfiguration } from "./config.js";
 
-/** Dynamic driver imports keep the Pi CLI entrypoint free of OMP and SDK setup. */
+/** Dynamic driver imports keep the Pi CLI entrypoint free of SDK setup. */
 export async function createConfiguredRuntime(
   configuration: RuntimeConfiguration = readRuntimeConfiguration(),
 ): Promise<ClaudeRuntime> {

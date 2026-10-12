@@ -27,7 +27,6 @@ import {
   ROOT,
   RpcHost,
   assertSocketCapacity,
-  configureHostIsolation,
   hostArgs,
   hostEnvironment,
   managedPiStartupOutput,
@@ -42,8 +41,6 @@ const enabled = process.env.PI_CLAUDE_BOUNDARY_E2E === "1";
 const selected = process.env.PI_CLAUDE_BOUNDARY_CASE;
 const installed = process.env.PI_CLAUDE_BOUNDARY_INSTALLED === "1";
 const keepFailed = process.env.PI_CLAUDE_BOUNDARY_KEEP_FAILED === "1";
-const activeEnabled = process.env.PI_CLAUDE_ACTIVE_E2E === "1";
-const activeSelected = process.env.PI_CLAUDE_ACTIVE_CASE;
 const boundaryModel =
   process.env.PI_CLAUDE_BOUNDARY_MODEL ?? "claude-sonnet-5-5";
 assert.ok(
@@ -59,61 +56,6 @@ if (enabled && selected)
     CASES.includes(selected),
     "Invalid PI_CLAUDE_BOUNDARY_CASE selection",
   );
-if (activeEnabled && activeSelected)
-  assert.ok(
-    ["omp+cli", "omp+sdk"].includes(activeSelected),
-    "Invalid PI_CLAUDE_ACTIVE_CASE selection",
-  );
-
-function activeAdmissionProof(events) {
-  const consumption = steeringConsumption(events);
-  const firstStop = events.find(
-    (entry) =>
-      entry.type === "native-diagnostic" &&
-      entry.data.event.subtype === "core-message-stop",
-  );
-  const queued = events.find(
-    (entry) =>
-      entry.type === "steering-admission" && entry.data.state === "queued",
-  );
-  return {
-    ...consumption,
-    admittedBeforeOriginalMessageEnded:
-      Boolean(queued && firstStop) &&
-      queued.data.sequence < firstStop.data.event.sequence,
-  };
-}
-
-test("active steering timing proof rejects boundary-only admission", () => {
-  const admission = (state, sequence) => ({
-    type: "steering-admission",
-    data: { commandId: "synthetic-command", state, sequence },
-  });
-  const stop = {
-    type: "native-diagnostic",
-    data: { event: { subtype: "core-message-stop", sequence: 5 } },
-  };
-  assert.equal(
-    activeAdmissionProof([
-      admission("queued", 3),
-      stop,
-      admission("started", 6),
-    ]).admittedBeforeOriginalMessageEnded,
-    true,
-  );
-  assert.equal(
-    activeAdmissionProof([
-      stop,
-      admission("queued", 6),
-      admission("started", 7),
-    ]).admittedBeforeOriginalMessageEnded,
-    false,
-  );
-  assert.equal(
-    activeAdmissionProof([stop]).admittedBeforeOriginalMessageEnded,
-    false,
-  );
-});
 
 function observations(path) {
   return existsSync(path)
@@ -122,23 +64,6 @@ function observations(path) {
         .filter(Boolean)
         .map((line) => JSON.parse(line))
     : [];
-}
-
-function assertNoSteeringWarning(events, hostKind) {
-  if (hostKind !== "omp") return;
-  assert.ok(
-    events.some((event) => event.type === "steering-status-observer"),
-    "Native OMP ctx.ui.setStatus observer wasn't installed",
-  );
-  assert.equal(
-    events.filter(
-      (event) =>
-        ["steering-status", "runtime-status"].includes(event.type) &&
-        event.data.hasText,
-    ).length,
-    0,
-    "OMP emitted Claude steering or runtime status text beneath the prompt bar",
-  );
 }
 
 function systemPromptProof(events) {
@@ -200,7 +125,7 @@ function assertSystemPrompt(events) {
 function errorClassifier(value, stopReason) {
   const text = typeof value === "string" ? value.slice(0, 65536) : "";
   if (
-    /^Concurrent (Pi|OMP) provider rounds for one (session|logical agent) aren't supported$/.test(
+    /^Concurrent Pi provider rounds for one (session|logical agent) aren't supported$/.test(
       text,
     )
   )
@@ -270,64 +195,6 @@ function assistantDiagnostics(messages, boundaryStart = messages.length) {
     errorCount: errors.length,
     errors: errors.slice(0, 32),
     truncated: errors.length > 32,
-  };
-}
-
-const mcpDiscoveryScript = `
-import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { initializeWithSettings, loadCapability } from "@oh-my-pi/pi-coding-agent/discovery";
-import { cfgDisabledExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/settings";
-try {
-  const {cwd, agentDir, configFile} = await Bun.stdin.json();
-  const settings = await Settings.loadReadOnly({cwd, agentDir, configFiles:[configFile]});
-  const release = initializeWithSettings(settings);
-  try {
-    const result = await loadCapability("mcps", {cwd, agentDir, filter: server => server._source.level !== "project"});
-    const names = [...new Set(result.items.map(server => server.name))].sort();
-    const disabledExtensions = cfgDisabledExtensions.get(settings);
-    if (names.length > 128 || names.some(name => typeof name !== "string" || !/^[a-zA-Z0-9._:-]{1,128}$/.test(name))) throw new Error("Invalid MCP IDs");
-    process.stdout.write(JSON.stringify({names, disabledExtensions, warningCount:result.warnings.length}));
-  } finally { release(); }
-} catch { process.stdout.write(JSON.stringify({failed:true})); process.exitCode=1; }
-`;
-
-function isolateOmpMcp(sandbox, env) {
-  const configFile = join(sandbox, "host-isolation.yml");
-  // Capability discovery only reads config; it never connects to a server or
-  // imports extension factories. The actual host still discovers installed
-  // packages and all managed extensions, including Remnic.
-  const discovered = spawnSync("bun", ["-e", mcpDiscoveryScript], {
-    cwd: ROOT,
-    env,
-    input: JSON.stringify({
-      cwd: sandbox,
-      agentDir: env.PI_CODING_AGENT_DIR,
-      configFile,
-    }),
-    encoding: "utf8",
-    timeout: 15000,
-    maxBuffer: 65536,
-  });
-  assert.equal(discovered.status, 0, "Read-only native MCP discovery failed");
-  const result = JSON.parse(discovered.stdout);
-  const serverIds = result.names.map((name) => `mcp:${name}`);
-  const disabledExtensions = [
-    ...new Set([...result.disabledExtensions, ...serverIds]),
-  ];
-  writeFileSync(
-    configFile,
-    JSON.stringify({
-      disabledProviders: ["claude", "claude-plugins"],
-      disabledExtensions,
-      mcp: { enableProjectConfig: false },
-    }) + "\n",
-    { mode: 0o600 },
-  );
-  return {
-    serverIds,
-    warningCount: result.warningCount,
-    configScope: "owned-session-overlay",
-    managedExtensionsPreserved: true,
   };
 }
 
@@ -446,8 +313,7 @@ function userText(message) {
         .join("\n");
 }
 
-function boundaryThinking(hostKind) {
-  if (hostKind === "omp") return "off";
+function boundaryThinking() {
   const model = getBuiltinModels("anthropic").find(
     (model) => model.id === boundaryModel,
   );
@@ -456,7 +322,7 @@ function boundaryThinking(hostKind) {
 }
 
 async function select(rpc, hostKind, installedPackage = false) {
-  const thinking = boundaryThinking(hostKind);
+  const thinking = boundaryThinking();
   const { models } = await rpc.command("get_available_models");
   const registered = models.filter(
     (model) => model.provider === "pi-claude-cli",
@@ -471,8 +337,7 @@ async function select(rpc, hostKind, installedPackage = false) {
       registered.length,
       "Installed provider registered duplicate model IDs",
     );
-    // The managed OMP picker filters enabledModels; CLI model selection still
-    // uses the complete registry. Avoid persisting model/thinking preferences.
+    // Avoid persisting model/thinking preferences.
     const initial = await rpc.command("get_state");
     assert.equal(initial.model.provider, "pi-claude-cli");
     assert.equal(initial.model.id, boundaryModel);
@@ -506,9 +371,8 @@ function boundaryArgs(hostKind, sandbox, system, installedPackage = false) {
   const args = hostArgs(hostKind, sandbox, system);
   const modelIndex = args.indexOf("--model");
   assert.ok(modelIndex >= 0);
-  args[modelIndex + 1] =
-    hostKind === "omp" ? `pi-claude-cli/${boundaryModel}` : boundaryModel;
-  args[args.indexOf("--thinking") + 1] = boundaryThinking(hostKind);
+  args[modelIndex + 1] = boundaryModel;
+  args[args.indexOf("--thinking") + 1] = boundaryThinking();
   if (!installedPackage) return args;
   const disabled = args.indexOf("--no-extensions");
   assert.ok(disabled >= 0);
@@ -620,74 +484,6 @@ test("boundary fixture abort rejects without returning or leaking a polling time
         assert.deepEqual(
           observations(path).map((event) => event.type),
           ["gate-start", "gate-abort"],
-        );
-      },
-    );
-  } finally {
-    rmSync(sandbox, { recursive: true, force: true });
-  }
-});
-
-test("native status observer captures only steering/runtime metadata and delegates once", async () => {
-  const { observeSteeringStatus } = await import("./observer.ts");
-  const sandbox = scratchDirectory("g-");
-  const path = join(sandbox, "observations.jsonl");
-  try {
-    await withEnvironment(
-      { PCC_E2E_BOUNDARY: "1", PCC_E2E_OBSERVATIONS: path },
-      async () => {
-        const forwarded = [];
-        const ui = {
-          setStatus(key, text) {
-            assert.equal(this, ui);
-            forwarded.push({ key, text });
-          },
-        };
-        observeSteeringStatus({ ui }, "session_start");
-        observeSteeringStatus({ ui }, "context");
-        ui.setStatus("unrelated", "never-record");
-        ui.setStatus("pi-claude-cli-steering", "never-record");
-        ui.setStatus("pi-claude-cli-steering", undefined);
-        ui.setStatus(
-          "pi-claude-cli-progress",
-          "Claude status: thinking_tokens [turnId=never-record]",
-        );
-        ui.setStatus("pi-claude-cli-progress", undefined);
-        assert.equal(forwarded.length, 5);
-        assert.deepEqual(observations(path), [
-          {
-            type: "steering-status-observer",
-            data: { stage: "session_start" },
-          },
-          {
-            type: "steering-status",
-            data: { key: "pi-claude-cli-steering", hasText: true, length: 12 },
-          },
-          {
-            type: "steering-status",
-            data: { key: "pi-claude-cli-steering", hasText: false, length: 0 },
-          },
-          {
-            type: "runtime-status",
-            data: { key: "pi-claude-cli-progress", hasText: true, length: 52 },
-          },
-          {
-            type: "runtime-status",
-            data: { key: "pi-claude-cli-progress", hasText: false, length: 0 },
-          },
-        ]);
-        assert.equal(
-          readFileSync(path, "utf8").includes("never-record"),
-          false,
-        );
-        assert.throws(() => assertNoSteeringWarning(observations(path), "omp"));
-        assert.throws(() =>
-          assertNoSteeringWarning(
-            observations(path).filter(
-              (event) => event.type !== "steering-status",
-            ),
-            "omp",
-          ),
         );
       },
     );
@@ -853,8 +649,8 @@ test("provider steering proof records bounded marker presence without prompt tex
   }
 });
 
-test("Pi stream and OMP diagnostic admission observations retain only matching queue and consumption metadata", async () => {
-  const { nativeDiagnostic, steeringAdmission } = await import("./observer.ts");
+test("Pi stream admission observations retain only matching queue and consumption metadata", async () => {
+  const { steeringAdmission } = await import("./observer.ts");
   const sandbox = scratchDirectory("g-");
   const path = join(sandbox, "observations.jsonl");
   const event = {
@@ -872,16 +668,10 @@ test("Pi stream and OMP diagnostic admission observations retain only matching q
   try {
     await withEnvironment({ PCC_E2E_OBSERVATIONS: path }, async () => {
       steeringAdmission(event);
-      nativeDiagnostic({
-        owner: "claude",
-        hostSession: {},
-        hostAgent: {},
-        event: {
-          ...event,
-          sequence: 2,
-          data: { ...event.data, state: "started" },
-        },
-        privatePayload: "never-record",
+      steeringAdmission({
+        ...event,
+        sequence: 2,
+        data: { ...event.data, state: "started" },
       });
       for (const invalid of [
         { ...event, type: "user" },
@@ -902,13 +692,6 @@ test("Pi stream and OMP diagnostic admission observations retain only matching q
           { commandId: "synthetic-command", state: "queued", sequence: 1 },
           { commandId: "synthetic-command", state: "started", sequence: 2 },
         ],
-      });
-      const diagnostic = observations(path).find(
-        (entry) => entry.type === "native-diagnostic",
-      );
-      assert.deepEqual(diagnostic.data.event.data, {
-        commandId: "synthetic-command",
-        state: "started",
       });
       assert.equal(readFileSync(path, "utf8").includes("never-record"), false);
       assert.equal(
@@ -1022,38 +805,25 @@ test("native output proof captures split markers, snapshots and result presence 
   }
 });
 
-test("installed boundary discovery keeps owned observers and OMP isolation while removing source provider loading", () => {
-  for (const kind of ["pi", "omp"]) {
-    const source = boundaryArgs(
-      kind,
-      "/synthetic-owned-sandbox",
-      "synthetic-system",
-    );
-    assert.ok(source.includes("--no-extensions"));
-    assert.ok(source.includes(join(ROOT, `entrypoints/${kind}.ts`)));
-    assert.equal(
-      source[source.indexOf("--model") + 1],
-      kind === "omp" ? `pi-claude-cli/${boundaryModel}` : boundaryModel,
-    );
-    const args = boundaryArgs(
-      kind,
-      "/synthetic-owned-sandbox",
-      "synthetic-system",
-      true,
-    );
-    assert.equal(args.includes("--no-extensions"), false);
-    assert.equal(args.includes(join(ROOT, `entrypoints/${kind}.ts`)), false);
-    assert.ok(args.includes(join(ROOT, `tests/e2e/${kind}-tools.ts`)));
-    assert.equal(
-      args[args.indexOf("--model") + 1],
-      kind === "omp" ? `pi-claude-cli/${boundaryModel}` : boundaryModel,
-    );
-    if (kind === "omp")
-      assert.equal(
-        args[args.indexOf("--config") + 1],
-        "/synthetic-owned-sandbox/host-isolation.yml",
-      );
-  }
+test("installed boundary discovery keeps owned observers while removing source provider loading", () => {
+  const source = boundaryArgs(
+    "pi",
+    "/synthetic-owned-sandbox",
+    "synthetic-system",
+  );
+  assert.ok(source.includes("--no-extensions"));
+  assert.ok(source.includes(join(ROOT, "entrypoints/pi.ts")));
+  assert.equal(source[source.indexOf("--model") + 1], boundaryModel);
+  const args = boundaryArgs(
+    "pi",
+    "/synthetic-owned-sandbox",
+    "synthetic-system",
+    true,
+  );
+  assert.equal(args.includes("--no-extensions"), false);
+  assert.equal(args.includes(join(ROOT, "entrypoints/pi.ts")), false);
+  assert.ok(args.includes(join(ROOT, "tests/e2e/pi-tools.ts")));
+  assert.equal(args[args.indexOf("--model") + 1], boundaryModel);
 });
 
 test("installed boundary mode requires the explicit inference opt-in before package discovery", () => {
@@ -1270,12 +1040,6 @@ test("native response observation excludes other providers and keeps bridge iden
 test("assistant error evidence classifies all history errors without raw text or provider credentials", () => {
   assert.equal(
     errorClassifier(
-      "Concurrent OMP provider rounds for one logical agent aren't supported",
-    ),
-    "concurrent-session",
-  );
-  assert.equal(
-    errorClassifier(
       "Concurrent Pi provider rounds for one session aren't supported",
     ),
     "concurrent-session",
@@ -1346,67 +1110,6 @@ test("assistant error evidence classifies all history errors without raw text or
     assistantDiagnostics(Array(40).fill(messages[0])).truncated,
     true,
   );
-});
-
-test("native per-server MCP isolation preserves managed extensions and never starts configured commands", () => {
-  const sandbox = scratchDirectory("m-");
-  try {
-    const agentDir = join(sandbox, "agent");
-    mkdirSync(agentDir);
-    const poison = join(sandbox, "command-must-not-run");
-    writeFileSync(
-      join(agentDir, "config.yml"),
-      JSON.stringify({
-        disabledExtensions: ["extension-module:keep-disabled"],
-      }),
-    );
-    writeFileSync(
-      join(agentDir, "mcp.json"),
-      JSON.stringify({
-        mcpServers: {
-          synthetic: {
-            command: "touch",
-            args: [poison],
-            env: { SECRET: "never-persist-this" },
-          },
-        },
-      }),
-    );
-    configureHostIsolation("omp", sandbox);
-    const env = hostEnvironment("omp", "cli", sandbox, "synthetic");
-    env.PI_CODING_AGENT_DIR = agentDir;
-    const proof = isolateOmpMcp(sandbox, env);
-    assert.ok(proof.serverIds.includes("mcp:synthetic"));
-    const config = JSON.parse(
-      readFileSync(join(sandbox, "host-isolation.yml"), "utf8"),
-    );
-    assert.deepEqual(config.disabledProviders, ["claude", "claude-plugins"]);
-    assert.ok(config.disabledExtensions.includes("mcp:synthetic"));
-    assert.ok(
-      config.disabledExtensions.includes("extension-module:keep-disabled"),
-    );
-    assert.equal(
-      config.disabledExtensions.includes("extension-module:dist-bundle"),
-      false,
-    );
-    assert.equal(existsSync(poison), false);
-    assert.equal(JSON.stringify(proof).includes("never-persist-this"), false);
-    const check = spawnSync("bun", ["-e", mcpDiscoveryScript], {
-      cwd: ROOT,
-      env,
-      input: JSON.stringify({
-        cwd: sandbox,
-        agentDir,
-        configFile: join(sandbox, "host-isolation.yml"),
-      }),
-      encoding: "utf8",
-      timeout: 15000,
-    });
-    assert.equal(check.status, 0);
-    assert.deepEqual(JSON.parse(check.stdout).names, []);
-  } finally {
-    rmSync(sandbox, { recursive: true, force: true });
-  }
 });
 
 test("forced helper cleanup accepts only identified startup helpers outside Claude ancestry", () => {
@@ -1663,16 +1366,12 @@ for (const name of CASES) {
       try {
         receipt.socketPathBytes = assertSocketCapacity(sandbox);
         mkdirSync(join(sandbox, "t"));
-        configureHostIsolation(hostKind, sandbox);
         const env = hostEnvironment(hostKind, driver, sandbox, nonce);
         if (installed) {
           const agentRoot = realpathSync(
             join(homedir(), `.${hostKind}`, "agent"),
           );
-          const installRoot =
-            hostKind === "pi"
-              ? join(agentRoot, "npm")
-              : join(homedir(), ".omp", "plugins");
+          const installRoot = join(agentRoot, "npm");
           const packageRoot = realpathSync(
             join(installRoot, "node_modules/@ramarivera/pi-claude-cli"),
           );
@@ -1707,22 +1406,11 @@ for (const name of CASES) {
             env.PI_INTERCOM_SCOPE_ID = `pcc-e2e-${randomUUID()}`;
             receipt.packageResolution = { PI_OFFLINE: "1" };
             receipt.intercomSessionScoped = true;
-          } else {
-            const manifest = JSON.parse(
-              readFileSync(join(installRoot, "package.json"), "utf8"),
-            );
-            assert.equal(
-              manifest.dependencies[pkg.name],
-              pkg.version,
-              "Managed OMP manifest must pin the installed release exactly",
-            );
           }
           env.PI_CODING_AGENT_DIR = agentRoot;
           delete env.PI_CONFIG_DIR;
           receipt.packagePinVerified = true;
         }
-        if (hostKind === "omp")
-          receipt.externalMcpIsolation = isolateOmpMcp(sandbox, env);
         Object.assign(env, {
           PCC_E2E_BOUNDARY: "1",
           PCC_E2E_GATE_RELEASE: release,
@@ -1736,8 +1424,6 @@ for (const name of CASES) {
         }).stdout.trim();
         const system = `For this synthetic sandbox E2E, every assistant answer, including a greeting in response to hello, must begin with ${marker}. This prefix is mandatory. Obey the user's exact tool and supplemental instructions. Never inspect files, credentials, account settings, or network resources. Use only pcc_gate when requested.`;
         const args = boundaryArgs(hostKind, sandbox, system, installed);
-        // The shared live harness keeps its original tool selection.
-        if (hostKind === "omp") args[args.indexOf("--tools") + 1] = "pcc_gate";
         rpc = new RpcHost(receipt.versions.binary, args, env, sandbox, {
           signal: context.signal,
           ...(installed && hostKind === "pi"
@@ -1767,7 +1453,6 @@ for (const name of CASES) {
         failureStage = "greeting";
         const hello = await rpc.prompt(hostKind, "hello");
         const helloEvents = observations(path);
-        assertNoSteeringWarning(helloEvents, hostKind);
         receipt.phases.hello = {
           completed: true,
           steeringWarning: false,
@@ -1807,21 +1492,12 @@ for (const name of CASES) {
           true,
           "Steering ended the original native run",
         );
-        if (hostKind === "pi") {
-          assert.equal(
-            ack.disposition,
-            "queued",
-            "Pi didn't acknowledge queued steering",
-          );
-          assert.equal(queued.pendingMessageCount, 1);
-        } else {
-          assert.equal(queued.queuedMessageCount, 1);
-          assert.ok(
-            queued.queuedMessages.steering.length === 1 &&
-              queued.queuedMessages.steering[0] === supplemental,
-            "OMP didn't retain the exact supplemental instruction in its native queue",
-          );
-        }
+        assert.equal(
+          ack.disposition,
+          "queued",
+          "Pi didn't acknowledge queued steering",
+        );
+        assert.equal(queued.pendingMessageCount, 1);
         assert.equal(
           existsSync(release),
           false,
@@ -1831,7 +1507,6 @@ for (const name of CASES) {
           observations(path).filter((event) => event.type === "gate-release"),
           [],
         );
-        assertNoSteeringWarning(observations(path), hostKind);
         receipt.phases.queued = {
           acknowledgedWhileNativeToolRunning: true,
           queuedInputCount: 1,
@@ -1841,8 +1516,7 @@ for (const name of CASES) {
         };
 
         writeFileSync(release, "release\n", { mode: 0o600 });
-        const result = await rpc.settled(hostKind, promptId, before);
-        if (hostKind === "omp") assert.equal(result.status, "completed");
+        await rpc.settled(hostKind, promptId, before);
         const { text } = await rpc.command("get_last_assistant_text");
         receipt.phases.finalAnswer = {
           available: typeof text === "string",
@@ -1937,7 +1611,6 @@ for (const name of CASES) {
         );
         const events = observations(path);
         receipt.phases.systemPrompt = assertSystemPrompt(events);
-        assertNoSteeringWarning(events, hostKind);
         assert.equal(
           events.filter((event) => event.type === "gate-start").length,
           1,
@@ -2145,9 +1818,6 @@ for (const name of CASES) {
             "gate-release",
             "gate-abort",
             "gate-timeout",
-            "steering-status-observer",
-            "steering-status",
-            "runtime-status",
           ].includes(event.type),
         );
         let receiptPath;
@@ -2168,254 +1838,6 @@ for (const name of CASES) {
         }
         console.log(
           `${name} boundary ${receipt.status}; sanitized receipt: ${receiptPath}`,
-        );
-      }
-      if (failure) throw failure;
-    },
-  );
-}
-
-// The pinned Pi provider contract has no active input channel. Its four-way
-// boundary matrix above remains the real native fallback proof; these cases
-// specifically drive OMP's LiveSteering during text generation without tools.
-for (const name of ["omp+cli", "omp+sdk"]) {
-  test(
-    `actual ${name}: accepts steering during text generation without duplicate delivery`,
-    {
-      skip: !activeEnabled
-        ? "Authenticated active-input E2E disabled; set PI_CLAUDE_ACTIVE_E2E=1"
-        : activeSelected && activeSelected !== name
-          ? `Not selected by PI_CLAUDE_ACTIVE_CASE=${activeSelected}`
-          : false,
-      timeout: 210000,
-    },
-    async (context) => {
-      const [, driver] = name.split("+");
-      const sandbox = scratchDirectory("a-");
-      const path = join(sandbox, "observations.jsonl");
-      const marker = `SYSTEM-${randomUUID()}`;
-      const supplementalMarker = `ACTIVE-${randomUUID()}`;
-      const receipt = {
-        schemaVersion: 1,
-        provenance: "actual-authenticated-active-input-host-rpc",
-        case: name,
-        model: boundaryModel,
-        productionSha256: productionFingerprint(),
-        started: new Date().toISOString(),
-        budgets: {
-          maxTurns: 8,
-          maxOutputTokens: 512,
-          maxBudgetUsd: 0.25,
-          wallClockMs: 180000,
-        },
-        phases: {},
-      };
-      let rpc;
-      let failure;
-      let stage = "setup";
-      try {
-        receipt.socketPathBytes = assertSocketCapacity(sandbox);
-        mkdirSync(join(sandbox, "t"));
-        configureHostIsolation("omp", sandbox);
-        const env = hostEnvironment(
-          "omp",
-          driver,
-          sandbox,
-          "unused-active-nonce",
-        );
-        Object.assign(env, {
-          PCC_E2E_BOUNDARY: "1",
-          PCC_E2E_SYSTEM_MARKER: marker,
-          PCC_E2E_STEER_MARKER: supplementalMarker,
-        });
-        receipt.versions = preflight("omp", env);
-        receipt.git = spawnSync("git", ["rev-parse", "HEAD"], {
-          cwd: ROOT,
-          encoding: "utf8",
-        }).stdout.trim();
-        const system = `Every answer must begin with ${marker}. This is an isolated synthetic test. Don't inspect files, credentials, account settings or network resources. Don't call any tools. Follow new user corrections when received.`;
-        const args = boundaryArgs("omp", sandbox, system);
-        args[args.indexOf("--tools") + 1] = "pcc_gate";
-        rpc = new RpcHost(receipt.versions.binary, args, env, sandbox, {
-          signal: context.signal,
-          deadline: Date.now() + 180000,
-        });
-        const originalState = await select(rpc, "omp");
-        rpc.rememberBaseline();
-        stage = "active-generation";
-        const since = rpc.frames.length;
-        const promptId = rpc.send("prompt", {
-          message:
-            "No tools. Write a numbered list of 18 simple facts about arithmetic, with exactly eight words per item. Begin immediately and keep going until item 18.",
-        });
-        await rpc.wait(
-          () =>
-            rpc.frames
-              .slice(since)
-              .find(
-                (frame) =>
-                  frame.type === "message_update" &&
-                  frame.assistantMessageEvent?.type === "text_delta",
-              ),
-          "actual text generation before active steering",
-          60000,
-        );
-        const supplemental = `New instruction: stop writing the list. In your next answer, after the system-required prefix, output only the exact marker ${supplementalMarker}. No tools.`;
-        await rpc.command("steer", { message: supplemental }, 4000);
-        receipt.phases.submission = {
-          actualTextDeltaObserved: true,
-          inputLength: supplemental.length,
-        };
-        // Native admission must happen while the original assistant message is
-        // still open. A tool boundary or a later ordinary prompt doesn't pass.
-        await rpc.wait(
-          () =>
-            observations(path).find(
-              (event) =>
-                event.type === "steering-admission" &&
-                event.data.state === "queued",
-            ),
-          "native active steering admission",
-          15000,
-        );
-        const result = await rpc.settled("omp", promptId, since);
-        assert.equal(result.status, "completed");
-        const { messages } = await rpc.command("get_messages");
-        const { text } = await rpc.command("get_last_assistant_text");
-        receipt.phases.answer = {
-          markerIncluded:
-            typeof text === "string" && text.includes(supplementalMarker),
-          length: typeof text === "string" ? text.length : 0,
-        };
-        textProof(text, marker, supplementalMarker);
-        const corrections = messages.filter(
-          (message) =>
-            message.role === "user" && userText(message) === supplemental,
-        );
-        receipt.phases.history = {
-          correctionCount: corrections.length,
-          liveSteered: corrections[0]?.liveSteered === true,
-          errors: assistantDiagnostics(messages).errorCount,
-          toolCalls: messages.flatMap((message) =>
-            message.role === "assistant"
-              ? message.content.filter((block) => block.type === "toolCall")
-              : [],
-          ).length,
-        };
-        assert.equal(
-          corrections.length,
-          1,
-          "Accepted input was lost or duplicated in native history",
-        );
-        assert.equal(
-          corrections[0].liveSteered,
-          true,
-          "OMP delivered input at a later ordinary boundary",
-        );
-        assert.equal(receipt.phases.history.errors, 0);
-        assert.equal(receipt.phases.history.toolCalls, 0);
-        const events = observations(path);
-        receipt.phases.consumption = activeAdmissionProof(events);
-        assert.equal(
-          receipt.phases.consumption.admittedBeforeOriginalMessageEnded,
-          true,
-          "Input wasn't admitted during token generation",
-        );
-        assert.equal(receipt.phases.consumption.matchingCommandIds, true);
-        assert.equal(receipt.phases.consumption.queuedBeforeStarted, true);
-        assert.equal(
-          receipt.phases.consumption.queuedCount,
-          1,
-          "Correction was sent to Claude more than once",
-        );
-        assertNoSteeringWarning(events, "omp");
-        const originalClaudeId = responseIds(events, driver)[0];
-        assert.ok(
-          responseIds(events, driver).every((id) => id === originalClaudeId),
-        );
-        receipt.phases.systemPrompt = assertSystemPrompt(events);
-        stage = "resident-after-steering";
-        const followup = await rpc.prompt(
-          "omp",
-          "No tools. Repeat the exact marker from my previous correction, after the mandatory system prefix.",
-        );
-        textProof(followup, marker, supplementalMarker);
-        assert.ok(
-          responseIds(observations(path), driver).every(
-            (id) => id === originalClaudeId,
-          ),
-          "Accepted-input history forced a Claude session rebuild",
-        );
-        const finalState = await rpc.command("get_state");
-        assert.equal(finalState.sessionId, originalState.sessionId);
-        assert.equal(finalState.model.id, originalState.model.id);
-        assert.equal(finalState.queuedMessageCount, 0);
-        receipt.phases.resident = {
-          rememberedCorrection: true,
-          hostSessionId: finalState.sessionId,
-          claudeSessionId: originalClaudeId,
-        };
-        receipt.stats = publicStats(await rpc.command("get_session_stats"));
-        stage = "cleanup";
-        await rpc.command("new_session");
-        receipt.transportCleanup = await rpc.transportIdle(join(sandbox, "t"));
-        receipt.status = "passed";
-      } catch (error) {
-        failure = error;
-        receipt.status = "failed";
-        receipt.failure = {
-          name: error.name,
-          stage,
-          classifier: errorClassifier(error.message),
-        };
-        if (rpc)
-          receipt.assistantDiagnostics = assistantDiagnostics(
-            rpc.frames
-              .filter((frame) => frame.type === "message_end")
-              .map((frame) => frame.message)
-              .filter(Boolean),
-          );
-      } finally {
-        try {
-          if (rpc) {
-            receipt.cleanup = await rpc.close();
-            assert.deepEqual(receipt.cleanup.survivors, []);
-            assert.deepEqual(receipt.cleanup.forcedChildren, []);
-            assert.equal(receipt.cleanup.hostRequiredKill, false);
-          }
-          receipt.privateTransportFiles = existsSync(join(sandbox, "t"))
-            ? readdirSync(join(sandbox, "t")).filter((file) =>
-                file.startsWith("pcc-cli-"),
-              )
-            : [];
-          assert.deepEqual(receipt.privateTransportFiles, []);
-        } catch (error) {
-          failure ??= error;
-          receipt.status = "failed";
-          receipt.cleanupFailure = { name: error.name };
-        }
-        receipt.finished = new Date().toISOString();
-        receipt.phases.consumption = activeAdmissionProof(observations(path));
-        receipt.observations = observations(path).filter((event) =>
-          [
-            "response",
-            "steering-admission",
-            "native-diagnostic",
-            "steering-input",
-            "steering-status",
-            "runtime-status",
-          ].includes(event.type),
-        );
-        const receiptPath = join(
-          receiptDirectory(),
-          `active-${name.replace("+", "-")}-${Date.now()}.json`,
-        );
-        writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + "\n", {
-          mode: 0o600,
-        });
-        rmSync(sandbox, { recursive: true, force: true });
-        console.log(
-          `${name} active input ${receipt.status}; sanitized receipt: ${receiptPath}`,
         );
       }
       if (failure) throw failure;

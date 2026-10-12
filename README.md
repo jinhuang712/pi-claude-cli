@@ -1,6 +1,8 @@
 # pi-claude-cli
 
-Run Claude through the published `claude -p` runtime or the official Claude Agent SDK, with native entrypoints for [Pi](https://github.com/earendil-works/pi) and [Oh My Pi](https://github.com/can1357/oh-my-pi).
+Run Claude through the published `claude -p` runtime or the official Claude Agent SDK, with a native entrypoint for [Pi](https://github.com/earendil-works/pi).
+
+Fork of [ramarivera/pi-claude-cli](https://github.com/ramarivera/pi-claude-cli) (MIT). pi only: Oh My Pi support is removed.
 
 Select the `pi-claude-cli` provider in the host's model picker. CLI is the default driver; set `PI_CLAUDE_DRIVER=sdk` to select the SDK. Both drivers let the official Claude runtime use its own login. The extension doesn't read the host's Anthropic OAuth credentials or construct subscription-authenticated HTTP requests.
 
@@ -8,10 +10,9 @@ Select the `pi-claude-cli` provider in the host's model picker. CLI is the defau
 
 ```text
 pi install npm:@ramarivera/pi-claude-cli@0.4.2
-omp plugin install @ramarivera/pi-claude-cli@0.4.2
 ```
 
-Authenticate with `claude auth login`, restart your host, and select a `pi-claude-cli/...` model. The npm package name is scoped; the provider ID stays `pi-claude-cli`. See [release instructions](docs/releasing.md) and [supported versions](docs/compatibility.md).
+Authenticate with `claude auth login`, restart Pi, and select a `pi-claude-cli/...` model. The npm package name is scoped; the provider ID stays `pi-claude-cli`. See [supported versions](docs/compatibility.md).
 
 ## Run from this checkout
 
@@ -28,13 +29,13 @@ To select SDK in Nushell:
 with-env { PI_CLAUDE_DRIVER: "sdk" } { pi -e ./index.ts }
 ```
 
-The package manifest exposes `pi.extensions` and `omp.extensions` for each host's package discovery. The root entrypoint loads Pi; `./omp` loads OMP. See [supported versions](docs/compatibility.md).
+The package manifest exposes `pi.extensions` for Pi's package discovery, and the root entrypoint loads Pi. See [supported versions](docs/compatibility.md).
 
 ## Tools and sessions
 
-Each host supplies its effective tools and native JSON schemas. Claude calls them through the reserved `host` MCP namespace; Pi or OMP executes them, and the correlated results return to the parked Claude request. The runtime keeps a resident process/query across host tool rounds rather than killing Claude at an assistant-message boundary. For a completed batch, the host may execute proposed calls before every MCP handler arrives. The core holds those results until each actual handler matches the completed call's ID, name and arguments.
+Pi supplies its effective tools and native JSON schemas. Claude calls them through the reserved `host` MCP namespace; Pi executes them, and the correlated results return to the parked Claude request. The runtime keeps a resident process/query across host tool rounds rather than killing Claude at an assistant-message boundary. For a completed batch, the host may execute proposed calls before every MCP handler arrives. The core holds those results until each actual handler matches the completed call's ID, name and arguments.
 
-Native Claude tools are disabled by default. Explicitly configured Claude tools or user MCP servers execute under Claude ownership. They aren't renamed into host tools. OMP keeps its own hashline, apply-patch and replacement edit formats, distinct glob/search tools and timeout units.
+Native Claude tools are disabled by default. Explicitly configured Claude tools or user MCP servers execute under Claude ownership. They aren't renamed into host tools.
 
 The shared core reconciles streaming deltas and assistant snapshots, preserves thinking signatures and attributed progress, and reports result/error boundaries. Host history, tool schemas, cwd, branch and settings determine whether a resident session can continue. Divergent or imported history is rebuilt as labelled user-history replay; this isn't native restoration of private Claude session files. Failed turns don't automatically retry through the other driver.
 
@@ -68,17 +69,15 @@ User MCP configuration accepts explicit stdio (`command`, `args`, `env`) or HTTP
 ```text
 npm run test:offline
 npm run typecheck:pi
-npm run typecheck:omp
 npm run lint
 npm run test:coverage
-npm run verify:plan
 ```
 
-Offline tests don't make authenticated model calls. `npm run test:live` reports four skipped combinations unless `PI_CLAUDE_LIVE_E2E=1`; enabled runs require the actual hosts, official Claude runtime and selected credentials. They consume real account resources. The live harness and its receipts are documented under [live harness and receipts](docs/testing/live-harness.md).
+Offline tests don't make authenticated model calls. `npm run test:live` reports its cases as skipped unless `PI_CLAUDE_LIVE_E2E=1`; enabled runs require the actual hosts, official Claude runtime and selected credentials. They consume real account resources. The live harness and its receipts are documented under [live harness and receipts](docs/testing/live-harness.md).
 
-`npm run test:steering` runs offline checks and skips its six actual-host
-cases unless `PI_CLAUDE_BOUNDARY_E2E=1`. Set `PI_CLAUDE_BOUNDARY_CASE=omp+cli`
-(or another host/driver pair) to select one paid queued-steering case.
+`npm run test:steering` runs offline checks and skips its actual-host
+cases unless `PI_CLAUDE_BOUNDARY_E2E=1`. Set `PI_CLAUDE_BOUNDARY_CASE=pi+cli`
+(or `pi+sdk`) to select one paid queued-steering case.
 These cases default to Sonnet 5.5. Set `PI_CLAUDE_BOUNDARY_INSTALLED=1` with the
 inference opt-in to test the actual managed installed release.
 
@@ -87,14 +86,13 @@ inference opt-in to test the actual managed installed release.
 ```mermaid
 flowchart LR
   Pi[Pi entrypoint and adapter] --> Core[Host-neutral session and event core]
-  OMP[OMP entrypoint and adapter] --> Core
   Core --> CLI[Resident claude -p driver]
   Core --> SDK[Official Agent SDK driver]
   CLI --> Claude[Published Claude runtime]
   SDK --> Claude
 ```
 
-The core and drivers import neither host. OMP session state, progress presentation and native formats stay in the OMP adapter; the Pi entrypoint doesn't initialize OMP. OMP exposes attributed progress on `pi-claude-cli:observation` and bounded message/tool correlation diagnostics on `pi-claude-cli:diagnostic`; the diagnostic bus excludes text, tool arguments, schemas and credentials. Routine runtime metadata goes to OMP's native file logger rather than status rows below its prompt bar; genuine errors retain native reporting.
+The core and drivers import neither host. Pi session state, progress presentation and native formats stay in the Pi adapter.
 
 ## License
 

@@ -7,7 +7,6 @@ import {
   MODEL,
   RpcHost,
   assertSocketCapacity,
-  configureHostIsolation,
   executable,
   hostArgs,
   hostEnvironment,
@@ -39,19 +38,13 @@ for (const name of CASES) {
       try {
         assertSocketCapacity(sandbox);
         mkdirSync(join(sandbox, "t"));
-        configureHostIsolation(host, sandbox);
         const env = hostEnvironment(
           host,
           driver,
           sandbox,
           "loading-no-inference",
         );
-        const binary = executable(
-          host === "pi"
-            ? (process.env.PI_E2E_BIN ?? "pi")
-            : (process.env.OMP_E2E_BIN ??
-                "/home/ramarivera/.local/share/mise/installs/github-can1357-oh-my-pi/latest/omp"),
-        );
+        const binary = executable(process.env.PI_E2E_BIN ?? "pi");
         rpc = new RpcHost(
           binary,
           hostArgs(host, sandbox, "Loading-only system marker"),
@@ -81,16 +74,6 @@ for (const name of CASES) {
         assert.equal(state.model.provider, "pi-claude-cli");
         assert.equal(state.model.id, MODEL);
         assert.equal(state.thinkingLevel, "off");
-        if (host === "omp") {
-          assert.ok(
-            state.dumpTools.some((tool) => tool.name === "pcc_sentinel"),
-          );
-          assert.ok(state.dumpTools.some((tool) => tool.name === "pcc_slow"));
-          const edit = state.dumpTools.find((tool) => tool.name === "edit");
-          assert.ok(edit);
-          assert.deepEqual(Object.keys(edit.parameters.properties), ["input"]);
-          assert.ok(edit.description.includes("Hashline"));
-        }
         assert.equal(
           rpc.commands.filter((command) => command.type === "prompt").length,
           0,

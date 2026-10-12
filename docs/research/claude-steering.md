@@ -1,14 +1,10 @@
 # Claude steering: transport, timing, and limits
 
-Research for `pcc-6se`, checked September 30–October 1, 2026. The supported fix is steering at a parked host-tool boundary: queue the user's correction, wait for native queue admission, then release the outstanding MCP results. It doesn't implement immediate input through OMP's `LiveSteering` channel.
+Research for `pcc-6se`, checked September 30–October 1, 2026. The supported fix is steering at a parked host-tool boundary: queue the user's correction, wait for native queue admission, then release the outstanding MCP results. Arbitrary input during token generation isn't integrated.
 
-The subsequent main-branch change `pcc-9g6` adds active queue acceptance through OMP's native `LiveSteering` channel for both drivers. It submits `next` input during generated text, accepts the host claim after native admission, and preserves the continuation across OMP's following provider request without resubmission. Real OMP CLI/SDK cases verified admission before the original message ended, matching consumption receipts, exactly one native history correction and resident follow-up. This is T3-style active queueing; arbitrary generation preemption remains outside the guarantee. See [current source research and host ownership](../../openspec/changes/add-active-claude-steering/research.md) and [execution evidence](../../openspec/changes/add-active-claude-steering/execution.md). The sections below describe the released 0.4.3 boundary fix and its original reference snapshot.
+## Driver capability
 
-## The warning and the actual capability
-
-OMP supplies a `LiveSteering` object even when it contains no input. The adapter previously used that object's presence to display an unconditional steering warning, so ordinary prompts showed the warning. Removing that status fixes the misleading UI; it doesn't establish that queued input reaches Claude. Capability checks belong on actual submitted steering content.
-
-The host-neutral driver capability distinguishes `unsupported`, `tool-boundary`, and `live`. This change advertises `tool-boundary`. A correction attached to host-tool results reaches the resident Claude turn before those results are released. Arbitrary input during token generation through OMP's immediate channel remains outside this guarantee.
+The host-neutral driver capability distinguishes `unsupported`, `tool-boundary`, and `live`. This change advertises `tool-boundary`. A correction attached to host-tool results reaches the resident Claude turn before those results are released. Arbitrary input during token generation remains outside this guarantee.
 
 ## T3Code's precedent
 
@@ -36,4 +32,4 @@ Evidence in scratch `steering-research/runtime-2.1.286/`: `bundle-222253114.js:2
 
 ## Accuracy and remaining limits
 
-[Official streaming-input docs](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode) establish persistent sessions and sequential queued input. The timing conclusions above additionally depend on version-specific runtime source. T3's fake tests and source inspection aren't live behavioral evidence. The fix requires focused receipt/order/finalization tests and an actual host-tool steering run; it doesn't claim that an SDK upgrade supplies safe immediate OMP steering during every execution phase.
+[Official streaming-input docs](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode) establish persistent sessions and sequential queued input. The timing conclusions above additionally depend on version-specific runtime source. T3's fake tests and source inspection aren't live behavioral evidence. The fix requires focused receipt/order/finalization tests and an actual host-tool steering run; it doesn't claim that an SDK upgrade supplies safe immediate steering during every execution phase.

@@ -1,7 +1,7 @@
 {
   "name": "@ramarivera/pi-claude-cli",
   "version": "0.4.5",
-  "description": "Pi and Oh My Pi extension with a shared Claude core and selectable CLI or official Agent SDK transport",
+  "description": "Pi extension with a shared Claude core and selectable CLI or official Agent SDK transport",
   "main": "index.ts",
   "keywords": [
     "pi-package"
@@ -18,9 +18,7 @@
   "license": "MIT",
   "peerDependencies": {
     "@earendil-works/pi-ai": "0.99.1",
-    "@earendil-works/pi-coding-agent": "0.99.1",
-    "@oh-my-pi/pi-ai": "18.8.6",
-    "@oh-my-pi/pi-coding-agent": "18.8.6"
+    "@earendil-works/pi-coding-agent": "0.99.1"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.285",
@@ -30,8 +28,6 @@
     "@earendil-works/pi-ai": "0.99.1",
     "@earendil-works/pi-coding-agent": "0.99.1",
     "@eslint/js": "^9.39.4",
-    "@oh-my-pi/pi-ai": "18.8.6",
-    "@oh-my-pi/pi-coding-agent": "18.8.6",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.2.4",
     "eslint": "^9.39.4",
@@ -63,23 +59,15 @@
     "test:live": "node tests/run-live.mjs",
     "test:steering": "node --test tests/e2e/boundary-steering.test.mjs",
     "test:contracts": "vitest run tests/contracts tests/conformance --reporter=dot",
-    "verify:plan": "node openspec/changes/modernize-claude-runtime/sync-beads.mjs",
-    "typecheck:pi": "tsc --noEmit -p tsconfig.pi.json",
-    "typecheck:omp": "tsc --noEmit -p tsconfig.omp.json"
+    "typecheck:pi": "tsc --noEmit -p tsconfig.pi.json"
   },
   "type": "module",
   "engines": {
     "node": ">=22.19.0"
   },
-  "omp": {
-    "extensions": [
-      "entrypoints/omp.ts"
-    ]
-  },
   "exports": {
     ".": "./index.ts",
     "./pi": "./entrypoints/pi.ts",
-    "./omp": "./entrypoints/omp.ts",
     "./core": "./src/core/index.ts",
     "./cli": "./src/drivers/cli/index.ts",
     "./sdk": "./src/drivers/sdk/index.ts",
@@ -98,12 +86,6 @@
       "optional": true
     },
     "@earendil-works/pi-coding-agent": {
-      "optional": true
-    },
-    "@oh-my-pi/pi-ai": {
-      "optional": true
-    },
-    "@oh-my-pi/pi-coding-agent": {
       "optional": true
     }
   },

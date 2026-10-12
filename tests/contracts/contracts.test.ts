@@ -15,7 +15,6 @@ import {
   ContractSessionDouble,
   createCliContractDouble,
   createSdkContractDouble,
-  ompHostContractDouble,
   piHostContractDouble,
 } from "./doubles.js";
 
@@ -205,19 +204,13 @@ describe.each([
 });
 
 describe("host-neutral adapter contract doubles", () => {
-  it("preserves the effective native schema and round boundary through both adapters", () => {
+  it("preserves the effective native schema and round boundary through the adapter", () => {
     const request = round();
     const pi = piHostContractDouble.toRequest({
       host: "pi",
       providerRound: request,
     });
-    const omp = ompHostContractDouble.toRequest({
-      host: "omp",
-      editFormat: "hashline",
-      providerRound: request,
-    });
     expect(pi.tools[0].inputSchema).toEqual(tools[0].inputSchema);
-    expect(omp.tools[0]._meta).toEqual({ "anthropic/alwaysLoad": true });
     const event: ClaudeRoundEvent = {
       type: "round_end",
       roundId: request.roundId,
@@ -226,7 +219,6 @@ describe("host-neutral adapter contract doubles", () => {
       pendingToolCallIds: ["toolu-a"],
     };
     expect(piHostContractDouble.fromEvent(event)).toEqual(event);
-    expect(ompHostContractDouble.fromEvent(event)).toEqual(event);
   });
 });
 

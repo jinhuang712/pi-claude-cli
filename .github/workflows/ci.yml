@@ -31,26 +31,17 @@ jobs:
           node-version: "22"
           package-manager-cache: false
       - run: npm ci
-      - name: Prepare private scratch and pinned compiled OMP
+      - name: Prepare private scratch
         shell: bash
         run: |
           SCRATCH="$HOME/dev/agentic-scratchpads/pi-claude-cli/ci"
-          mkdir -p "$SCRATCH/t" "$SCRATCH/bin"
+          mkdir -p "$SCRATCH/t"
           chmod 700 "$SCRATCH" "$SCRATCH/t"
-          curl --fail --location --retry 3 --output "$SCRATCH/bin/omp" \
-            https://github.com/can1357/oh-my-pi/releases/download/v18.8.6/omp-linux-x64
-          echo "877acdc48384b80fe4c083b1e610433d28922dd9fccde9ea430aaace8765b19b  $SCRATCH/bin/omp" | sha256sum --check
-          chmod 755 "$SCRATCH/bin/omp"
-          test "$("$SCRATCH/bin/omp" --version)" = "omp/18.8.6"
           echo "TMPDIR=$SCRATCH/t" >> "$GITHUB_ENV"
-          echo "PCC_COMPILED_BUN_EXECUTABLE=$SCRATCH/bin/omp" >> "$GITHUB_ENV"
       - run: npm run typecheck
       - run: npm run typecheck:pi
-      - run: npm run typecheck:omp
       - run: npm run lint
       - run: npm run format:check
-      - name: Validate committed implementation plan
-        run: node openspec/changes/modernize-claude-runtime/validate-plan.mjs
       - run: npm run test:coverage
       - run: node --test tests/e2e/harness.test.mjs
       - name: Verify package contents
@@ -66,7 +57,7 @@ jobs:
           for (const path of [pkg.main, "README.md", "LICENSE", ...Object.values(pkg.exports)]) {
             assert(files.has(path.replace(/^\.\//, "")), `Package is missing ${path}`);
           }
-          assert(![...files].some(path => /^(tests|node_modules|openspec)\//.test(path)), "Package includes development files");
+          assert(![...files].some(path => /^(tests|node_modules)\//.test(path)), "Package includes development files");
           NODE
 
   macos:
@@ -105,4 +96,3 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run typecheck:pi
-      - run: npm run typecheck:omp

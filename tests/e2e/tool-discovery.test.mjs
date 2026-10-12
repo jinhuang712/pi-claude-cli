@@ -8,7 +8,6 @@ import {
   CASES,
   ROOT,
   RpcHost,
-  configureHostIsolation,
   hostArgs,
   hostEnvironment,
   preflight,
@@ -34,7 +33,7 @@ for (const name of CASES)
       const packageRoot = installed
         ? join(
             homedir(),
-            kind === "pi" ? ".pi/agent/npm" : ".omp/plugins",
+            ".pi/agent/npm",
             "node_modules/@ramarivera/pi-claude-cli",
           )
         : ROOT;
@@ -46,7 +45,6 @@ for (const name of CASES)
       assert.equal(fingerprint, productionFingerprint(ROOT));
       const sandbox = scratchDirectory("d-");
       mkdirSync(join(sandbox, "t"), { mode: 0o700 });
-      configureHostIsolation(kind, sandbox);
       writeFileSync(join(sandbox, "fixture.txt"), "before\n");
       const created = `created-${randomUUID()}`;
       const env = hostEnvironment(kind, driver, sandbox, created);
@@ -54,7 +52,7 @@ for (const name of CASES)
       const versions = preflight(kind, env);
       const args = hostArgs(kind, sandbox, "unused");
       // Use the real native system prompt and its editing instructions. Earlier
-      // tests replaced it and supplied hashline syntax in the user's request.
+      // tests replaced it and supplied edit syntax in the user's request.
       args.splice(args.indexOf("--system-prompt"), 2);
       if (installed)
         args[args.indexOf(join(ROOT, `entrypoints/${kind}.ts`))] = join(

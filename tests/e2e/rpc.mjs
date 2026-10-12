@@ -10,14 +10,13 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join, relative, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { publicAssistant, publicStats } from "./diagnostics.mjs";
 
 export const MODEL = "claude-haiku-4-5-20251001";
-export const CASES = ["pi+cli", "pi+sdk", "omp+cli", "omp+sdk"];
+export const CASES = ["pi+cli", "pi+sdk"];
 export const ROOT = realpathSync(new URL("../..", import.meta.url));
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -110,17 +109,6 @@ export function assertSocketCapacity(sandbox) {
   return bytes;
 }
 
-export function configureHostIsolation(host, sandbox) {
-  if (host !== "omp") return;
-  // OMP 18.8.6 treats inherited CLAUDE_CONFIG_DIR as a user discovery opt-in.
-  // Its native settings filter these discovery providers before MCP loading.
-  writeFileSync(
-    join(sandbox, "host-isolation.yml"),
-    'disabledProviders: ["claude", "claude-plugins"]\nmcp:\n  enableProjectConfig: false\n',
-    { mode: 0o600 },
-  );
-}
-
 export function executable(name, env = process.env) {
   const found = name.includes("/")
     ? [name]
@@ -178,34 +166,20 @@ export function hostEnvironment(
     PCC_E2E_OBSERVATIONS: join(sandbox, "observations.jsonl"),
     TMPDIR: join(sandbox, "t"),
     PI_CODING_AGENT_DIR: join(sandbox, `${host}-agent`),
-    PI_CONFIG_DIR: relative(homedir(), join(sandbox, "omp-root")),
-    OMP_PROFILE: "",
     PI_PROFILE: "",
-    PI_EDIT_VARIANT: "hashline",
   });
   return output;
 }
 
 export function preflight(host, env) {
-  const binary = executable(
-    host === "pi"
-      ? (process.env.PI_E2E_BIN ?? "pi")
-      : (process.env.OMP_E2E_BIN ??
-          "/home/ramarivera/.local/share/mise/installs/github-can1357-oh-my-pi/latest/omp"),
-  );
-  if (host === "omp")
-    assert.equal(
-      readFileSync(binary).subarray(0, 4).toString("hex"),
-      "7f454c46",
-      "OMP requires the compiled ELF host",
-    );
+  const binary = executable(process.env.PI_E2E_BIN ?? "pi");
   const version = spawnSync(binary, ["--version"], {
     env,
     encoding: "utf8",
     timeout: 10000,
   });
   assert.equal(version.status, 0, "Host --version prerequisite failed");
-  const expected = host === "pi" ? "0.99.1" : "18.8.6";
+  const expected = "0.99.1";
   assert.match(
     version.stdout,
     new RegExp(`(^|\\D)${expected.replaceAll(".", "\\.")}(\\D|$)`),
@@ -258,7 +232,7 @@ export function preflight(host, env) {
 }
 
 export function hostArgs(host, sandbox, marker) {
-  const shared = [
+  return [
     "--mode",
     "rpc",
     "--no-extensions",
@@ -271,36 +245,15 @@ export function hostArgs(host, sandbox, marker) {
     join(sandbox, `${host}-sessions`),
     "--system-prompt",
     marker,
+    "--no-prompt-templates",
+    "--no-themes",
+    "--provider",
+    "pi-claude-cli",
+    "--model",
+    MODEL,
+    "--thinking",
+    "off",
   ];
-  return host === "pi"
-    ? [
-        ...shared,
-        "--no-prompt-templates",
-        "--no-themes",
-        "--provider",
-        "pi-claude-cli",
-        "--model",
-        MODEL,
-        "--thinking",
-        "off",
-      ]
-    : [
-        ...shared,
-        "--no-ui",
-        "--no-rules",
-        "--no-title",
-        "--no-lsp",
-        "--no-pty",
-        "--auto-approve",
-        "--config",
-        join(sandbox, "host-isolation.yml"),
-        "--tools",
-        "read,write,bash,edit,pcc_sentinel,pcc_slow",
-        "--model",
-        `pi-claude-cli/${MODEL}`,
-        "--thinking",
-        "off",
-      ];
 }
 
 function processes() {
@@ -561,27 +514,6 @@ export class RpcHost {
     return frame.data;
   }
   async settled(host, id, since) {
-    if (host === "omp") {
-      const result = await this.wait(
-        () =>
-          this.frames
-            .slice(since)
-            .find((frame) => frame.type === "prompt_result" && frame.id === id),
-        "correlated OMP prompt_result",
-        90000,
-      );
-      assert.notEqual(result.status, "error", "OMP prompt failed");
-      await this.wait(
-        () =>
-          this.frames
-            .slice(since)
-            .some((frame) => frame.type === "session_settled"),
-        "OMP session_settled",
-      );
-      const state = await this.command("get_state");
-      assert.equal(state.isSettled, true, "OMP session isn't settled");
-      return result;
-    }
     await this.wait(
       () =>
         this.frames

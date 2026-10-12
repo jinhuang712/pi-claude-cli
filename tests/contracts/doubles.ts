@@ -225,21 +225,9 @@ export interface PiHostDoubleRequest {
   providerRound: HostRoundRequest;
   host: "pi";
 }
-export interface OmpHostDoubleRequest {
-  providerRound: HostRoundRequest;
-  host: "omp";
-  editFormat: "hashline" | "replace" | "apply-patch";
-}
 
 export const piHostContractDouble: HostAdapter<
   PiHostDoubleRequest,
-  ClaudeRoundEvent
-> = {
-  toRequest: (request) => request.providerRound,
-  fromEvent: (event) => event,
-};
-export const ompHostContractDouble: HostAdapter<
-  OmpHostDoubleRequest,
   ClaudeRoundEvent
 > = {
   toRequest: (request) => request.providerRound,

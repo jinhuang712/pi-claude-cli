@@ -8,7 +8,6 @@ import {
   CASES,
   ROOT,
   RpcHost,
-  configureHostIsolation,
   hostArgs,
   hostEnvironment,
   preflight,
@@ -34,7 +33,7 @@ for (const name of CASES)
       const packageRoot = installed
         ? join(
             homedir(),
-            kind === "pi" ? ".pi/agent/npm" : ".omp/plugins",
+            ".pi/agent/npm",
             "node_modules/@ramarivera/pi-claude-cli",
           )
         : ROOT;
@@ -47,7 +46,6 @@ for (const name of CASES)
       assert.equal(fingerprint, productionFingerprint(ROOT));
       const sandbox = scratchDirectory("c-");
       mkdirSync(join(sandbox, "t"), { mode: 0o700 });
-      configureHostIsolation(kind, sandbox);
       const marker = `CACHE_${randomUUID().replaceAll("-", "")}`;
       const env = hostEnvironment(kind, driver, sandbox, marker);
       env.PCC_E2E_BOUNDARY = "1";

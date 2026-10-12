@@ -18,9 +18,6 @@ login directory, selected `claude` executable, host tools, model and runtime
 configuration. The official login preflight succeeds. Source and both installed
 SDK bundles are identical. Managed Pi SDK inference also succeeds with its smoke
 test's custom prompt, so a universal SDK credential failure isn't established.
-The maintained reproducer subsequently passed both custom and native prompt
-cases on OMP 18.4.4; Pi's native case still fails. This further isolates the
-problem from an account-wide SDK entitlement failure.
 
 The evidence implicates the native prompt or resulting request shape. The exact
 server classification rule remains unknown; these observations don't establish
@@ -45,7 +42,7 @@ Nushell with:
 with-env {PI_CLAUDE_SDK_AUTH_E2E: "1"} { node --test tests/e2e/sdk-auth.test.mjs }
 ```
 
-Set `PI_CLAUDE_SDK_AUTH_HOST` to `omp` for the same control on OMP. These tests
+These tests
 make real requests, use a synthetic no-tool input, disable host retry/compaction,
 and bound each Claude session to USD 0.25 and 512 output tokens. They don't enable
 extra usage or change the account. Receipts live under the project scratchpads.

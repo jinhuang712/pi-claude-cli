@@ -12,14 +12,12 @@ import {
 import { join } from "node:path";
 import test from "node:test";
 import { textProof } from "./diagnostics.mjs";
-import { hashlineProof } from "./hashline-proof.mjs";
 import {
   CASES,
   MODEL,
   ROOT,
   RpcHost,
   assertSocketCapacity,
-  configureHostIsolation,
   hostArgs,
   hostEnvironment,
   preflight,
@@ -164,8 +162,7 @@ async function abortInference(rpc, hostKind) {
     "Inference ended before the abort could be exercised",
   );
   await rpc.command("abort");
-  const result = await rpc.settled(hostKind, id, since);
-  if (hostKind === "omp") assert.equal(result.status, "aborted");
+  await rpc.settled(hostKind, id, since);
   const { messages } = await rpc.command("get_messages");
   const last = messages
     .filter((message) => message.role === "assistant")
@@ -254,7 +251,6 @@ for (const name of CASES) {
       try {
         receipt.socketPathBytes = assertSocketCapacity(sandbox);
         mkdirSync(join(sandbox, "t"));
-        configureHostIsolation(hostKind, sandbox);
         writeFileSync(join(sandbox, "fixture.txt"), "before\n");
         const nonce = `nonce-${randomUUID()}`;
         const marker = `SYSTEM-${randomUUID()}`;
@@ -296,9 +292,7 @@ for (const name of CASES) {
           driver,
         ).at(-1);
         const toolPrompt =
-          hostKind === "omp"
-            ? "Read fixture.txt with the native read tool. Use its current 4-hex snapshot tag to call the native edit tool with its documented hashline {input: patch} syntax, replacing line 1 with replacement. Do not use write or bash. Then call pcc_sentinel exactly once. Finish by reporting its exact nonce; don't call it again."
-            : "Call pcc_sentinel exactly once. Finish by reporting its exact nonce; don't call any other tool.";
+          "Call pcc_sentinel exactly once. Finish by reporting its exact nonce; don't call any other tool.";
         receipt.prompts.push(toolPrompt);
         textProof(await rpc.prompt(hostKind, toolPrompt), marker, nonce);
         let events = observations(observationPath);
@@ -317,12 +311,6 @@ for (const name of CASES) {
           structuredContent: calls[0].data,
           canonicalResultMatched: true,
         };
-        if (hostKind === "omp") {
-          receipt.phases.hashline = hashlineProof(
-            events,
-            readFileSync(join(sandbox, "fixture.txt"), "utf8"),
-          );
-        }
         const resident =
           "No tools. Repeat the nonce returned by pcc_sentinel earlier in this conversation.";
         receipt.prompts.push(resident);
