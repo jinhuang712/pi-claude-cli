@@ -27,6 +27,7 @@ export default defineConfig([
         setInterval: "readonly",
         clearInterval: "readonly",
         AbortController: "readonly",
+        fetch: "readonly",
         URL: "readonly",
       },
     },

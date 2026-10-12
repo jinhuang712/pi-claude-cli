@@ -16,10 +16,9 @@ Checked by hand on 2026-10-12 on macOS: pi 1.1.0 and Claude CLI 2.1.296, with th
 
 ## To do
 
-1. **A smoke test per release.** One command that runs the four-call task and a second prompt against the installed pi and Claude CLI, checks the result, and prints each call's time. It replaces the upstream author's live-verification matrix, and it is how a new pi or Claude Code release gets added to the tested versions in `docs/compatibility.md`.
-2. **An extra-usage guard.** Anthropic may bill requests that carry pi's default system prompt as extra usage. The `pi-claude-bridge` extension refuses to send such a prompt. This extension sends pi's prompt unchanged. Credits did not move in the runs above, which used Sonnet 5 only. Add the same guard, then test the Opus and Fable models.
-3. **Idle session close.** Each live pi session keeps a Claude process of about 150–330 MB, and the extension never closes it while pi runs. Close a session's process after a configurable idle time (for example 10 minutes) and resume it by its session ID on the next prompt.
-4. **Driver default.** The CLI driver is the default and the SDK driver is the fallback. Keep it that way, and name the fallback in the README.
+1. **An extra-usage guard.** Anthropic may bill requests that carry pi's default system prompt as extra usage. The `pi-claude-bridge` extension refuses to send such a prompt. This extension sends pi's prompt unchanged. Credits did not move in the runs above, which used Sonnet 5 only. Add the same guard, then test the Opus and Fable models.
+2. **Idle session close.** Each live pi session keeps a Claude process of about 150–330 MB, and the extension never closes it while pi runs. Close a session's process after a configurable idle time (for example 10 minutes) and resume it by its session ID on the next prompt.
+3. **Driver default.** The CLI driver is the default and the SDK driver is the fallback. Keep it that way, and name the fallback in the README.
 
 ## To measure, with no change planned
 
