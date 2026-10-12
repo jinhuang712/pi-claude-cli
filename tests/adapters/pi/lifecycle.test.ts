@@ -15,6 +15,7 @@ import type {
   HostRoundRequest,
 } from "../../../src/contracts/index.js";
 import { registerPiAdapter } from "../../../src/adapters/pi/index.js";
+import { readRuntimeConfiguration } from "../../../entrypoints/config.js";
 import {
   PiLifecycle,
   idleWatchdog,
@@ -92,11 +93,17 @@ const compact: SessionCompactEvent = {
   reason: "manual",
   willRetry: false,
 };
-async function setup(events: ClaudeRoundEvent[] = [initialized(), stop]) {
+async function setup(
+  events: ClaudeRoundEvent[] = [initialized(), stop],
+  config = configuration,
+) {
   const native = host();
   const backend = runtime(events);
   const factory = vi.fn(async () => backend);
-  registerPiAdapter(native.pi, { configuration, runtimeFactory: factory });
+  registerPiAdapter(native.pi, {
+    configuration: config,
+    runtimeFactory: factory,
+  });
   await native.emit({ type: "session_start", reason: "startup" });
   return {
     ...native,
@@ -1160,5 +1167,70 @@ describe("provider idle watchdog", () => {
     });
     await native.emit({ type: "session_shutdown", reason: "quit" });
     expect(factory).not.toHaveBeenCalled();
+  });
+});
+
+describe("Pi idle close", () => {
+  const idle = (ms: number) =>
+    readRuntimeConfiguration({ PI_CLAUDE_IDLE_CLOSE_MS: String(ms) });
+  it("reads the idle close setting, ten minutes by default and zero to turn it off", () => {
+    expect(readRuntimeConfiguration({}).idleCloseMs).toBe(600_000);
+    expect(idle(0).idleCloseMs).toBe(0);
+    expect(idle(1500).idleCloseMs).toBe(1500);
+    expect(() => idle(-1)).toThrow("PI_CLAUDE_IDLE_CLOSE_MS");
+  });
+  it("closes the Claude process of an idle session and keeps the pi session working", async () => {
+    vi.useFakeTimers();
+    const native = await setup([initialized(), stop], idle(1000));
+    await native.run();
+    expect(native.backend.close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(native.backend.close).toHaveBeenCalledOnce();
+    const closed = vi.mocked(native.backend.close).mock.calls[0]?.[0];
+    expect(closed).toBeTruthy();
+    // The pi session survives: its next prompt runs a new round.
+    const rounds = vi.mocked(native.backend.streamRound).mock.calls.length;
+    const events = await native.run();
+    expect(events.at(-1)).toMatchObject({ type: "done" });
+    expect(vi.mocked(native.backend.streamRound).mock.calls.length).toBe(
+      rounds + 1,
+    );
+  });
+  it("starts the idle time again when a new round ends", async () => {
+    vi.useFakeTimers();
+    const native = await setup([initialized(), stop], idle(1000));
+    await native.run();
+    await vi.advanceTimersByTimeAsync(600);
+    await native.run();
+    await vi.advanceTimersByTimeAsync(600);
+    expect(native.backend.close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(400);
+    expect(native.backend.close).toHaveBeenCalledOnce();
+  });
+  it("doesn't close a session while Claude waits for a host tool result", async () => {
+    vi.useFakeTimers();
+    const native = await setup([initialized(), parked], idle(1000));
+    const controller = new AbortController();
+    await native.toolRun({ signal: controller.signal });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(native.backend.close).not.toHaveBeenCalled();
+    controller.abort();
+    await flush();
+  });
+  it("doesn't set a timer when idle close is off", async () => {
+    vi.useFakeTimers();
+    const native = await setup([initialized(), stop], idle(0));
+    await native.run();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(native.backend.close).not.toHaveBeenCalled();
+  });
+  it("clears the idle timer when the session shuts down", async () => {
+    vi.useFakeTimers();
+    const native = await setup([initialized(), stop], idle(1000));
+    await native.run();
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    await native.emit({ type: "session_shutdown", reason: "quit" });
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
