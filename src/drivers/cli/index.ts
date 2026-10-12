@@ -22,13 +22,13 @@ import type {
   UnsequencedClaudeDriverEvent,
   InteractionResponse,
 } from "../../contracts/index.js";
+import { MIN_CLAUDE_VERSION, atLeast } from "../../compat.js";
 import { EventQueue, JsonLines } from "./framing.js";
 import { ControlChannel } from "./controls.js";
 import { PromptReceipts } from "../prompt-receipts.js";
 import { HOST_MCP_NAME, hostToolSystemPrompt } from "../host-tool-prompt.js";
 
 const HOST_SERVER = HOST_MCP_NAME;
-const SUPPORTED_VERSION = "2.1.285";
 const MAX_FRAME = 1024 * 1024;
 const AUTH_OVERRIDES = [
   "ANTHROPIC_API_KEY",
@@ -99,14 +99,10 @@ function preflight(
           );
           return;
         }
-        if (
-          !new RegExp(
-            `^${SUPPORTED_VERSION.replaceAll(".", "\\.")}(?:\\s|$)`,
-          ).test(stdout.trim())
-        ) {
+        if (!atLeast(stdout.trim(), MIN_CLAUDE_VERSION)) {
           reject(
             new Error(
-              `Unsupported Claude CLI version; requires ${SUPPORTED_VERSION}`,
+              `Unsupported Claude CLI version; requires ${MIN_CLAUDE_VERSION} or newer`,
             ),
           );
           return;

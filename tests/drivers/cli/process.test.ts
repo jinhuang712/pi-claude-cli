@@ -527,8 +527,12 @@ describe("CLI resident process (offline child double)", () => {
   });
   it("fails version preflight before resident startup/inference", async () => {
     await expect(open({ PCC_VERSION: "2.1.284" })).rejects.toThrow(
-      "requires 2.1.285",
+      "requires 2.1.285 or newer",
     );
+  });
+  it("starts on a Claude CLI newer than the minimum", async () => {
+    const { session } = await open({ PCC_VERSION: "2.1.296" });
+    await session.close();
   });
   it("reports an unavailable executable preflight without exposing env", async () => {
     const driver = createCliDriver({
