@@ -4,13 +4,13 @@ This fork runs Claude for [pi](https://github.com/earendil-works/pi) through a r
 
 ## Done
 
-| Item | Change |
-|---|---|
-| Oh My Pi support | Removed, with the upstream author's planning and release process files |
-| Exact pi pin | Pi 0.99.1 or newer is accepted (`src/compat.ts`) |
-| Exact Claude CLI pin | Claude CLI 2.1.285 or newer is accepted |
-| Pinned dependencies | The Agent SDK and MCP SDK use caret ranges, and the lockfile is on SDK 0.3.296 and MCP SDK 1.32.1 |
-| Issues | Enabled on this fork |
+| Item                 | Change                                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| Oh My Pi support     | Removed, with the upstream author's planning and release process files                            |
+| Exact pi pin         | Pi 0.99.1 or newer is accepted (`src/compat.ts`)                                                  |
+| Exact Claude CLI pin | Claude CLI 2.1.285 or newer is accepted                                                           |
+| Pinned dependencies  | The Agent SDK and MCP SDK use caret ranges, and the lockfile is on SDK 0.3.296 and MCP SDK 1.32.1 |
+| Issues               | Enabled on this fork                                                                              |
 
 Checked by hand on 2026-10-12 on macOS: pi 1.1.0 and Claude CLI 2.1.296, with the CLI and the SDK driver. A four-call task and a second prompt ran with one resident Claude process for both prompts. The first call of the second prompt took about 1.5 s. Neither driver used extra usage.
 
