@@ -1,20 +1,17 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 // The Linux CI gate invokes this file; include the real process-ownership
 // regressions here as well as allowing their standalone focused invocation.
 import "./process-ownership.test.mjs";
 import { publicAssistant, publicStats, textProof } from "./diagnostics.mjs";
-import { hashlineProof } from "./hashline-proof.mjs";
 import {
   ROOT,
   RpcHost,
   assertSocketCapacity,
-  configureHostIsolation,
   executable,
-  hostArgs,
   hostEnvironment,
   managedPiStartupOutput,
   scratchDirectory,
@@ -26,29 +23,6 @@ function runnerEnvironment(overrides) {
   // Node's child-v8 test context suppresses a nested runner's normal execution.
   delete env.NODE_TEST_CONTEXT;
   return env;
-}
-
-function hashlineEvents(input) {
-  return [
-    {
-      type: "tool-end",
-      data: {
-        toolName: "read",
-        isError: false,
-        result: {
-          content: [{ type: "text", text: "[fixture.txt#F27C]\n1:before" }],
-        },
-      },
-    },
-    {
-      type: "tool-start",
-      data: { toolName: "edit", toolCallId: "synthetic-edit", args: { input } },
-    },
-    {
-      type: "tool-end",
-      data: { toolName: "edit", toolCallId: "synthetic-edit", isError: false },
-    },
-  ];
 }
 
 test("managed startup accepts only observed footer diagnostics and records categories without raw output", async () => {
@@ -131,61 +105,6 @@ for (const [name, line, opts] of [
       await rpc.close();
     }
   });
-
-test("native fixture hashline proof accepts paired wrappers and unwrapped successful edits", () => {
-  const body = "[fixture.txt#F27C]\nPUT 1.=1:\n+replacement";
-  for (const input of [
-    body,
-    body + "\n",
-    "*** Begin Patch\n" + body + "\n*** End Patch\n",
-  ])
-    assert.deepEqual(hashlineProof(hashlineEvents(input), "replacement\n"), {
-      args: { input },
-      readTag: "F27C",
-      fileBytes: "replacement\n",
-    });
-});
-
-test("hashline proof rejects mismatched tags, invalid syntax and Pi-style arguments", () => {
-  for (const input of [
-    "[fixture.txt#FFFF]\nPUT 1.=1:\n+replacement",
-    "[fixture.txt#F27C]\nPUT 0.=1:\n+replacement",
-    "[fixture.txt#F27C]\nPUT 1.=1:\nreplacement",
-    "[fixture.txt#F27C]\nPUT 1.=1:\n+replacement\nREM",
-    "*** Begin Patch\n[fixture.txt#F27C]\nPUT 1.=1:\n+replacement",
-    "[fixture.txt#F27C]\nPUT 1.=1:\n+replacement\n*** End Patch",
-    "*** Begin Patch\n*** Update File: fixture.txt\n@@\n-before\n+replacement\n*** End Patch",
-  ])
-    assert.throws(() => hashlineProof(hashlineEvents(input), "replacement\n"));
-  const events = hashlineEvents("[fixture.txt#F27C]\nPUT 1.=1:\n+replacement");
-  events[1].data.args = {
-    path: "fixture.txt",
-    oldText: "before",
-    newText: "replacement",
-  };
-  assert.throws(() => hashlineProof(events, "replacement\n"));
-});
-
-test("hashline proof requires one successful correlated native execution and changed bytes", () => {
-  const fixture = () =>
-    hashlineEvents("[fixture.txt#F27C]\nPUT 1.=1:\n+replacement");
-  for (const mutate of [
-    (events) => events.pop(),
-    (events) => events.push(events[0]),
-    (events) => events.push(events[1]),
-    (events) => {
-      events[2].data.isError = true;
-    },
-    (events) => {
-      events[2].data.toolCallId = "wrong-id";
-    },
-  ]) {
-    const events = fixture();
-    mutate(events);
-    assert.throws(() => hashlineProof(events, "replacement\n"));
-  }
-  assert.throws(() => hashlineProof(fixture(), "before\n"));
-});
 
 test("semantic marker failure retains synthetic text, final usage/error and stats", async () => {
   const script = `
@@ -277,312 +196,6 @@ test("public diagnostic projections exclude private payload fields", () => {
   );
 });
 
-test("OMP normalized observations whitelist synthetic event metadata without payload values", async () => {
-  const { normalizedObservation } = await import("./observer.ts");
-  const sandbox = scratchDirectory("observer-");
-  const previous = process.env.PCC_E2E_OBSERVATIONS;
-  const path = join(sandbox, "observations.jsonl");
-  try {
-    process.env.PCC_E2E_OBSERVATIONS = path;
-    normalizedObservation({ owner: "other", event: { type: "observation" } });
-    normalizedObservation({
-      owner: "claude",
-      event: { type: "assistant_snapshot", content: "never-record" },
-    });
-    normalizedObservation({
-      owner: "claude",
-      privateAccount: "never-record",
-      event: {
-        type: "host_tool_request",
-        sequence: 7,
-        attribution: { toolUseId: "synthetic-id", apiKey: "never-record" },
-        call: {
-          id: "synthetic-id",
-          name: "edit",
-          arguments: { input: "never-record" },
-        },
-        data: { auth: "never-record" },
-      },
-    });
-    normalizedObservation({
-      owner: "claude",
-      event: {
-        type: "observation",
-        family: "user-input",
-        subtype: "user",
-        data: { text: "never-record" },
-      },
-    });
-    normalizedObservation({
-      owner: "claude",
-      event: {
-        type: "session_error",
-        error: {
-          code: "protocol",
-          message: "never-record",
-          details: { auth: "never-record" },
-        },
-      },
-    });
-    const raw = readFileSync(path, "utf8");
-    const events = raw
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    assert.equal(events.length, 3);
-    assert.deepEqual(events[0], {
-      type: "normalized-observation",
-      data: {
-        type: "host_tool_request",
-        sequence: 7,
-        attribution: { toolUseId: "synthetic-id" },
-        call: { id: "synthetic-id", name: "edit", inputKeys: ["input"] },
-      },
-    });
-    assert.equal(events[1].data.family, "user-input");
-    assert.equal(events[2].data.errorCode, "protocol");
-    assert.equal(raw.includes("never-record"), false);
-  } finally {
-    if (previous === undefined) delete process.env.PCC_E2E_OBSERVATIONS;
-    else process.env.PCC_E2E_OBSERVATIONS = previous;
-    rmSync(sandbox, { recursive: true, force: true });
-  }
-});
-
-test("dedicated OMP diagnostic timeline retains nested boundary IDs and state without payloads", async () => {
-  const { nativeDiagnostic } = await import("./observer.ts");
-  const sandbox = scratchDirectory("observer-");
-  const previous = process.env.PCC_E2E_OBSERVATIONS;
-  const path = join(sandbox, "observations.jsonl");
-  try {
-    process.env.PCC_E2E_OBSERVATIONS = path;
-    const attribution = {
-      messageId: "synthetic-message",
-      parentToolUseId: null,
-    };
-    const runtimeBoundary = {
-      roundDone: false,
-      messageCount: 1,
-      proposalCount: 1,
-      parkedCount: 1,
-      deliveredCount: 0,
-      messages: [
-        {
-          messageId: "synthetic-message",
-          ended: false,
-          blockCount: 1,
-          toolCallIds: ["synthetic-edit"],
-        },
-      ],
-      unendedMessageIds: ["synthetic-message"],
-      proposalIds: ["synthetic-edit"],
-      unparkedProposalIds: [],
-      parkedIds: ["synthetic-edit"],
-      deliveredIds: [],
-    };
-    nativeDiagnostic({
-      owner: "claude",
-      hostSession: { sessionId: "synthetic-session", auth: "never-record" },
-      hostAgent: { kind: "main", id: "synthetic-agent", name: "never-record" },
-      event: {
-        type: "observation",
-        family: "diagnostic",
-        subtype: "core-assistant-snapshot",
-        sequence: 12,
-        attribution: { ...attribution, auth: "never-record" },
-        data: {
-          messageId: "synthetic-message",
-          previousActiveMessageId: null,
-          activeMessageId: "synthetic-message",
-          ended: false,
-          stopReasonPresent: true,
-          blockCount: 1,
-          blocks: [
-            {
-              index: 0,
-              type: "tool_call",
-              ended: true,
-              toolCallId: "synthetic-edit",
-              arguments: { input: "never-record" },
-              text: "never-record",
-            },
-          ],
-          snapshotId: "synthetic-snapshot",
-          snapshotKnownMessage: true,
-          snapshotFull: false,
-          snapshotStopReasonPresent: true,
-          runtimeBoundary: {
-            ...runtimeBoundary,
-            messages: [
-              { ...runtimeBoundary.messages[0], content: "never-record" },
-            ],
-            auth: "never-record",
-          },
-          text: "never-record",
-          args: "never-record",
-        },
-      },
-    });
-    nativeDiagnostic({
-      owner: "claude",
-      event: {
-        type: "observation",
-        family: "diagnostic",
-        subtype: "host-mcp-park",
-        sequence: 13,
-        attribution: { toolUseId: "synthetic-edit" },
-        data: {
-          toolUseId: "synthetic-edit",
-          toolName: "edit",
-          serverName: "host",
-          arguments: { input: "never-record" },
-          auth: "never-record",
-        },
-      },
-    });
-    const raw = readFileSync(path, "utf8");
-    const timeline = raw
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    assert.deepEqual(timeline, [
-      {
-        type: "native-diagnostic",
-        data: {
-          owner: "claude",
-          hostSession: { sessionId: "synthetic-session" },
-          hostAgent: { kind: "main", id: "synthetic-agent" },
-          event: {
-            type: "observation",
-            family: "diagnostic",
-            subtype: "core-assistant-snapshot",
-            sequence: 12,
-            attribution,
-            data: {
-              messageId: "synthetic-message",
-              previousActiveMessageId: null,
-              activeMessageId: "synthetic-message",
-              ended: false,
-              stopReasonPresent: true,
-              blockCount: 1,
-              blocks: [
-                {
-                  index: 0,
-                  type: "tool_call",
-                  ended: true,
-                  toolCallId: "synthetic-edit",
-                },
-              ],
-              snapshotId: "synthetic-snapshot",
-              snapshotKnownMessage: true,
-              snapshotFull: false,
-              snapshotStopReasonPresent: true,
-              runtimeBoundary,
-            },
-          },
-        },
-      },
-      {
-        type: "native-diagnostic",
-        data: {
-          owner: "claude",
-          hostSession: {},
-          hostAgent: {},
-          event: {
-            type: "observation",
-            family: "diagnostic",
-            subtype: "host-mcp-park",
-            sequence: 13,
-            attribution: { toolUseId: "synthetic-edit" },
-            data: {
-              toolUseId: "synthetic-edit",
-              toolName: "edit",
-              serverName: "host",
-            },
-          },
-        },
-      },
-    ]);
-    assert.equal(raw.includes("never-record"), false);
-  } finally {
-    if (previous === undefined) delete process.env.PCC_E2E_OBSERVATIONS;
-    else process.env.PCC_E2E_OBSERVATIONS = previous;
-    rmSync(sandbox, { recursive: true, force: true });
-  }
-});
-
-test("dedicated OMP diagnostics reject unsupported events and bound identifiers and nested arrays", async () => {
-  const { nativeDiagnostic } = await import("./observer.ts");
-  const sandbox = scratchDirectory("observer-");
-  const previous = process.env.PCC_E2E_OBSERVATIONS;
-  const path = join(sandbox, "observations.jsonl");
-  const event = {
-    type: "observation",
-    family: "diagnostic",
-    subtype: "core-message-start",
-    sequence: 0,
-    attribution: {},
-    data: {},
-  };
-  try {
-    process.env.PCC_E2E_OBSERVATIONS = path;
-    for (const invalid of [
-      { owner: "other", event },
-      { owner: "claude", event: { ...event, sequence: -1 } },
-      { owner: "claude", event: { ...event, sequence: 1.2 } },
-      { owner: "claude", event: { ...event, subtype: "unknown" } },
-      { owner: "claude", event: { ...event, family: "user-input" } },
-    ])
-      nativeDiagnostic(invalid);
-    assert.equal(existsSync(path), false);
-    const ids = Array.from({ length: 40 }, (_, i) => `synthetic-${i}`);
-    nativeDiagnostic({
-      owner: "claude",
-      hostSession: { sessionId: "x".repeat(129), branchId: "bad\nidentifier" },
-      event: {
-        ...event,
-        data: {
-          messageId: "",
-          ended: "false",
-          blockCount: -1,
-          blocks: ids.map((id) => ({
-            index: 0,
-            type: "tool_call",
-            toolCallId: id,
-            ended: true,
-          })),
-          runtimeBoundary: {
-            roundDone: false,
-            messages: ids.map((id) => ({
-              messageId: id,
-              ended: false,
-              toolCallIds: ids,
-            })),
-            proposalIds: ids,
-            parkedIds: ["", "x".repeat(129), "bad\nidentifier", "valid-id"],
-          },
-        },
-      },
-    });
-    const captured = JSON.parse(readFileSync(path, "utf8"));
-    assert.deepEqual(captured.data.hostSession, {});
-    const data = captured.data.event.data;
-    assert.equal(data.messageId, undefined);
-    assert.equal(data.ended, undefined);
-    assert.equal(data.blockCount, undefined);
-    assert.equal(data.blocks.length, 32);
-    assert.equal(data.runtimeBoundary.messages.length, 32);
-    assert.equal(data.runtimeBoundary.messages[0].toolCallIds.length, 32);
-    assert.deepEqual(data.runtimeBoundary.proposalIds, ids.slice(0, 32));
-    assert.deepEqual(data.runtimeBoundary.parkedIds, ["valid-id"]);
-    assert.equal(data.runtimeBoundary.roundDone, false);
-  } finally {
-    if (previous === undefined) delete process.env.PCC_E2E_OBSERVATIONS;
-    else process.env.PCC_E2E_OBSERVATIONS = previous;
-    rmSync(sandbox, { recursive: true, force: true });
-  }
-});
-
 test("native prompt observations retain only marker presence and effective length", async () => {
   const { providerPrompt, systemPrompt } = await import("./observer.ts");
   const sandbox = scratchDirectory("observer-");
@@ -630,7 +243,7 @@ test("native prompt observations retain only marker presence and effective lengt
   }
 });
 
-test("disabled direct runner explicitly skips all four authenticated cases", () => {
+test("disabled direct runner explicitly skips all authenticated cases", () => {
   const env = runnerEnvironment({ PI_CLAUDE_LIVE_E2E: "0" });
   const result = spawnSync(
     process.execPath,
@@ -638,8 +251,8 @@ test("disabled direct runner explicitly skips all four authenticated cases", () 
     { env, encoding: "utf8", timeout: 10000 },
   );
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /skipped 4/);
-  for (const name of ["pi+cli", "pi+sdk", "omp+cli", "omp+sdk"])
+  assert.match(result.stdout, /skipped 2/);
+  for (const name of ["pi+cli", "pi+sdk"])
     assert.ok(result.stdout.includes(`actual ${name}:`));
 });
 
@@ -724,12 +337,12 @@ test("login isolation retains official config location and clears alternative au
 test("api-key mode requires explicit key and preserves only selected API auth", () => {
   assert.throws(
     () =>
-      hostEnvironment("omp", "cli", "/tmp/synthetic", "nonce", {
+      hostEnvironment("pi", "cli", "/tmp/synthetic", "nonce", {
         PI_CLAUDE_AUTH: "api-key",
       }),
     /requires ANTHROPIC_API_KEY/,
   );
-  const env = hostEnvironment("omp", "cli", "/tmp/synthetic", "nonce", {
+  const env = hostEnvironment("pi", "cli", "/tmp/synthetic", "nonce", {
     PI_CLAUDE_AUTH: "api-key",
     ANTHROPIC_API_KEY: "synthetic-key",
     ANTHROPIC_BASE_URL: "https://api.invalid",
@@ -745,32 +358,6 @@ test("executable prerequisite rejects missing paths", () => {
     () => executable("/pcc-missing-executable"),
     /Missing executable prerequisite/,
   );
-});
-
-test("OMP native discovery isolation preserves explicit extensions and native tools", () => {
-  const sandbox = scratchDirectory("l-");
-  const path = join(sandbox, "host-isolation.yml");
-  try {
-    configureHostIsolation("pi", sandbox);
-    assert.equal(existsSync(path), false);
-    configureHostIsolation("omp", sandbox);
-    assert.equal(
-      readFileSync(path, "utf8"),
-      'disabledProviders: ["claude", "claude-plugins"]\nmcp:\n  enableProjectConfig: false\n',
-    );
-    assert.equal(statSync(path).mode & 0o777, 0o600);
-    const args = hostArgs("omp", sandbox, "synthetic system marker");
-    assert.equal(args[args.indexOf("--config") + 1], path);
-    assert.ok(args.includes(join(ROOT, "entrypoints/omp.ts")));
-    assert.ok(args.includes(join(ROOT, "tests/e2e/omp-tools.ts")));
-    assert.equal(
-      args[args.indexOf("--tools") + 1],
-      "read,write,bash,edit,pcc_sentinel,pcc_slow",
-    );
-    assert.equal(hostArgs("pi", sandbox, "marker").includes("--config"), false);
-  } finally {
-    rmSync(sandbox, { recursive: true, force: true });
-  }
 });
 
 test("scratch defaults and Linux socket capacity obey the project storage rule", () => {
@@ -819,7 +406,7 @@ test("test-context cancellation rejects an active RPC wait and permits awaited c
   }
 });
 
-for (const host of ["pi", "omp"]) {
+for (const host of ["pi"]) {
   test(`synthetic RPC parser ${host}: command acceptance doesn't complete the prompt`, async () => {
     // This is a parser test, not a live host or inference substitute.
     const script = `
@@ -833,7 +420,7 @@ for (const host of ["pi", "omp"]) {
           const emit = value => process.stdout.write(JSON.stringify(value) + '\\n');
           emit({type:'response',id:command.id,success:true,data:{isStreaming:false,isSettled:true}});
           if (command.type === 'prompt') setTimeout(() => {
-            ${host === "omp" ? "emit({type:'prompt_result',id:command.id,status:'completed'}); emit({type:'session_settled'});" : "emit({type:'agent_settled'});"}
+            emit({type:'agent_settled'});
           }, 150);
         }
       });
@@ -854,12 +441,7 @@ for (const host of ["pi", "omp"]) {
         Date.now() - before >= 100,
         "Parser treated prompt acceptance as completion",
       );
-      assert.ok(
-        rpc.frames.some(
-          (frame) =>
-            frame.type === (host === "pi" ? "agent_settled" : "prompt_result"),
-        ),
-      );
+      assert.ok(rpc.frames.some((frame) => frame.type === "agent_settled"));
     } finally {
       const cleanup = await rpc.close();
       assert.deepEqual(cleanup.forcedChildren, []);
