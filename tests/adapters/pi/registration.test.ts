@@ -528,7 +528,10 @@ describe("current Pi provider registration", () => {
   });
   it("fails clearly outside the supported version and doesn't hide registration errors", () => {
     expect(() => assertPiVersion("0.99.1")).not.toThrow();
-    expect(() => assertPiVersion("0.98.0")).toThrow("requires Pi 0.99.1");
+    expect(() => assertPiVersion("1.1.0")).not.toThrow();
+    expect(() => assertPiVersion("0.98.0")).toThrow(
+      "requires Pi 0.99.1 or newer",
+    );
     const native = host();
     vi.mocked(native.pi.registerProvider).mockImplementation(() => {
       throw new Error("host failed");

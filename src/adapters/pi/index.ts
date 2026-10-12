@@ -7,6 +7,7 @@ import {
   readRuntimeConfiguration,
   type RuntimeConfiguration,
 } from "../../../entrypoints/runtime.js";
+import { MIN_PI_VERSION, atLeast } from "../../compat.js";
 import type { ClaudeRuntime } from "../../contracts/index.js";
 import {
   payloadForHook,
@@ -22,11 +23,10 @@ import {
 } from "./lifecycle.js";
 
 export const PROVIDER_ID = "pi-claude-cli";
-export const SUPPORTED_PI_VERSION = "0.99.1";
 export function assertPiVersion(version: string): void {
-  if (version !== SUPPORTED_PI_VERSION)
+  if (!atLeast(version, MIN_PI_VERSION))
     throw new Error(
-      `pi-claude-cli requires Pi ${SUPPORTED_PI_VERSION}; loaded ${version}`,
+      `pi-claude-cli requires Pi ${MIN_PI_VERSION} or newer; loaded ${version}`,
     );
 }
 export interface PiAdapterOptions {
