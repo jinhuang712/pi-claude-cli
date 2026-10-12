@@ -11,7 +11,7 @@
 // It prints each call's time to first output, so a slow release shows up.
 //
 // Settings (environment):
-//   PI_BIN            the pi executable (default: pi on PATH)
+//   PI_BIN            the pi executable (default: the pi on PATH outside node_modules/.bin)
 //   PI_CLAUDE_DRIVER  cli (default) or sdk
 //   PI_SMOKE_MODEL    pi-claude-cli/<model> (default: pi-claude-cli/claude-sonnet-5)
 //   PI_SMOKE_PAUSE_S  seconds between the prompts (default 5)
@@ -28,11 +28,27 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const PI = process.env.PI_BIN ?? "pi";
+/**
+ * The pi on PATH without this repo's node_modules/.bin. `npm run` puts that
+ * directory first, and its dev copy of pi (the minimum supported version) would
+ * hide the pi you installed.
+ */
+function installedPi() {
+  const path = (process.env.PATH ?? "")
+    .split(delimiter)
+    .filter((entry) => !entry.endsWith(join("node_modules", ".bin")))
+    .join(delimiter);
+  const found = spawnSync("sh", ["-c", "command -v pi"], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: path },
+  });
+  return found.status === 0 ? found.stdout.trim() : "pi";
+}
+const PI = process.env.PI_BIN ?? installedPi();
 const MODEL = process.env.PI_SMOKE_MODEL ?? "pi-claude-cli/claude-sonnet-5";
 const PAUSE_MS = Number(process.env.PI_SMOKE_PAUSE_S ?? "5") * 1000;
 const CREDITS_URL = process.env.PI_SMOKE_CREDITS_URL;
