@@ -276,7 +276,7 @@ test("opt-in with a missing host prerequisite fails without starting inference",
       /Missing executable prerequisite: \/pcc-missing-host/,
     );
     assert.match(result.stdout, /fail 1/);
-    assert.match(result.stdout, /skipped 3/);
+    assert.match(result.stdout, /skipped 1/);
   } finally {
     rmSync(receipts, { recursive: true, force: true });
   }
