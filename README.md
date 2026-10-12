@@ -73,7 +73,11 @@ npm run lint
 npm run test:coverage
 ```
 
-Offline tests don't make authenticated model calls. `npm run test:live` reports its cases as skipped unless `PI_CLAUDE_LIVE_E2E=1`; enabled runs require the actual hosts, official Claude runtime and selected credentials. They consume real account resources. The live harness and its receipts are documented under [live harness and receipts](docs/testing/live-harness.md).
+Offline tests don't make authenticated model calls.
+
+`npm run test:smoke` runs this checkout in your installed pi with your Claude login. It sends a multi-tool prompt and a follow-up prompt in one pi process, checks that the files come out right and that one resident Claude process served both prompts, and prints each model call's time. It spends about seven model calls of subscription usage. Run it after a pi or Claude Code update. Settings are listed at the top of `tests/smoke/smoke.mjs`: `PI_BIN`, `PI_CLAUDE_DRIVER`, `PI_SMOKE_MODEL`, and `PI_SMOKE_CREDITS_URL`, which fails the run when an extra-usage counter you point it at grows.
+
+`npm run test:live` reports its cases as skipped unless `PI_CLAUDE_LIVE_E2E=1`; enabled runs require the actual hosts, official Claude runtime and selected credentials. They consume real account resources. The live harness and its receipts are documented under [live harness and receipts](docs/testing/live-harness.md).
 
 `npm run test:steering` runs offline checks and skips its actual-host
 cases unless `PI_CLAUDE_BOUNDARY_E2E=1`. Set `PI_CLAUDE_BOUNDARY_CASE=pi+cli`
