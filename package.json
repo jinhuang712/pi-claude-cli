@@ -54,7 +54,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format:check": "prettier --check .",
-    "prepare": "husky",
+    "prepare": "husky || true",
     "test:offline": "vitest run --reporter=dot",
     "test:live": "node tests/run-live.mjs",
     "test:smoke": "node tests/smoke/smoke.mjs",
