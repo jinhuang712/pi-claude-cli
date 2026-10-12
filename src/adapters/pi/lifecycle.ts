@@ -23,6 +23,12 @@ export interface PiSessionState {
   contextSignal?: AbortSignal;
   controller?: AbortController;
   releaseSignal?: () => void;
+  idleTimer?: ReturnType<typeof setTimeout>;
+}
+
+export interface PiLifecycleOptions {
+  /** Close a session's Claude process after this long idle. Zero or unset keeps it. */
+  idleCloseMs?: number;
 }
 
 interface PiRuntimeSlot {
@@ -36,7 +42,41 @@ export class PiLifecycle {
   private currentId?: string;
   private runtimeSlot?: PiRuntimeSlot;
   private readonly deferredCleanupErrors: unknown[] = [];
-  constructor(private readonly factory: () => Promise<ClaudeRuntime>) {}
+  constructor(
+    private readonly factory: () => Promise<ClaudeRuntime>,
+    private readonly options: PiLifecycleOptions = {},
+  ) {}
+
+  /** A round starts: the session isn't idle. */
+  cancelIdle(state: PiSessionState): void {
+    clearTimeout(state.idleTimer);
+    state.idleTimer = undefined;
+  }
+  /**
+   * A round ended. When Claude waits for nothing (no tool result is parked), the
+   * session is idle: close its Claude process after idleCloseMs. The pi session
+   * stays, and its next prompt rebuilds Claude's side from the host history.
+   */
+  touch(state: PiSessionState): void {
+    this.cancelIdle(state);
+    const ms = this.options.idleCloseMs ?? 0;
+    if (ms <= 0 || state.retired || state.active || state.parked) return;
+    state.idleTimer = setTimeout(() => {
+      state.idleTimer = undefined;
+      void this.closeIdle(state);
+    }, ms);
+    state.idleTimer.unref?.();
+  }
+  private async closeIdle(state: PiSessionState): Promise<void> {
+    if (state.retired || state.active || state.parked) return;
+    const runtime = this.runtimeSlot?.value;
+    if (!runtime) return;
+    state.claudeSessionId = undefined;
+    // A failed close stays in state.cleanup, which the next round awaits and reports.
+    await this.enqueue(state, () =>
+      runtime.close(state.identity.sessionId),
+    ).catch(() => {});
+  }
 
   runtime(): Promise<ClaudeRuntime> {
     this.reportDeferredCleanup();
@@ -167,6 +207,7 @@ export class PiLifecycle {
     branchId = state.identity.branchId,
   ): Promise<void> {
     const previous = { ...state.identity };
+    this.cancelIdle(state);
     state.generation++;
     state.identity = {
       ...previous,
@@ -200,6 +241,7 @@ export class PiLifecycle {
   async closeState(state: PiSessionState): Promise<void> {
     if (state.retired) return state.cleanup;
     state.retired = true;
+    this.cancelIdle(state);
     state.generation++;
     state.parked = false;
     this.detach(state);
@@ -226,6 +268,7 @@ export class PiLifecycle {
     this.sessions.clear();
     this.currentId = undefined;
     for (const state of states) {
+      this.cancelIdle(state);
       state.retired = true;
       state.generation++;
       state.parked = false;

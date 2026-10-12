@@ -13,7 +13,15 @@ export interface RuntimeConfiguration {
   auth: AuthConfig;
   settings: RuntimeSettings;
   driverOptions: DriverFactoryOptions;
+  /**
+   * How long a pi session may sit idle before its resident Claude process is
+   * closed. Zero keeps the process until the session ends. The next prompt of
+   * a closed session rebuilds Claude's side from the host history.
+   */
+  idleCloseMs: number;
 }
+
+const DEFAULT_IDLE_CLOSE_MS = 10 * 60_000;
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -131,9 +139,16 @@ export function readRuntimeConfiguration(
   const forward = env.PI_CLAUDE_FORWARD_SUBAGENT_TEXT;
   if (forward !== undefined && forward !== "0" && forward !== "1")
     throw new Error("PI_CLAUDE_FORWARD_SUBAGENT_TEXT must be 0 or 1");
+  const idleClose = env.PI_CLAUDE_IDLE_CLOSE_MS;
+  const idleCloseMs =
+    idleClose === "0"
+      ? 0
+      : (positiveNumber(env, "PI_CLAUDE_IDLE_CLOSE_MS") ??
+        DEFAULT_IDLE_CLOSE_MS);
   return {
     driver,
     auth,
+    idleCloseMs,
     settings: {
       effort: effort as Effort | undefined,
       maxTurns,

@@ -21,7 +21,10 @@ import type {
 } from "../../../src/contracts/index.js";
 import { readRuntimeConfiguration } from "../../../entrypoints/config.js";
 
-export const configuration = readRuntimeConfiguration({});
+// Idle close is off here, so tests that count timers see none. Its tests turn it on.
+export const configuration = readRuntimeConfiguration({
+  PI_CLAUDE_IDLE_CLOSE_MS: "0",
+});
 export const model: Model<Api> = {
   ...getBuiltinModels("anthropic").find((item) => item.reasoning)!,
   api: "pi-claude-cli",

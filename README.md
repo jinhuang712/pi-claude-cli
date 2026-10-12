@@ -45,20 +45,21 @@ Both drivers support queued steering at host tool boundaries: supplemental input
 
 Both entrypoints use the same environment settings. Restart/reload the extension after changing them.
 
-| Variable                          | Default        | Meaning                                                                                                  |
-| --------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------- |
-| `PI_CLAUDE_DRIVER`                | `cli`          | `cli` or `sdk`                                                                                           |
-| `PI_CLAUDE_AUTH`                  | `claude-login` | Official login, or explicitly selected `api-key` billing                                                 |
-| `PI_CLAUDE_EXECUTABLE`            | Driver default | Published Claude executable path                                                                         |
-| `PI_CLAUDE_EFFORT`                | Unset          | Model-supported `low`, `medium`, `high`, `xhigh` or `max`                                                |
-| `PI_CLAUDE_MAX_TURNS`             | Unset          | Positive integer Claude turn bound                                                                       |
-| `PI_CLAUDE_MAX_OUTPUT_TOKENS`     | Unset          | Positive safe integer output cap per Claude response; combined with the host cap using the smaller value |
-| `PI_CLAUDE_MAX_BUDGET_USD`        | Unset          | Positive Claude budget bound                                                                             |
-| `PI_CLAUDE_TOOL_TIMEOUT_MS`       | `180000`       | Deadline for dispatch after a completed tool proposal and for parked host results                        |
-| `PI_CLAUDE_SHUTDOWN_TIMEOUT_MS`   | `5000`         | Driver shutdown deadline                                                                                 |
-| `PI_CLAUDE_INTERNAL_TOOLS`        | `[]`           | JSON array of explicitly enabled Claude tool names                                                       |
-| `PI_CLAUDE_MCP_CONFIG`            | Unset          | File containing explicitly configured user `mcpServers`                                                  |
-| `PI_CLAUDE_FORWARD_SUBAGENT_TEXT` | `0`            | Set `1` to forward attributed Claude subagent text                                                       |
+| Variable                          | Default        | Meaning                                                                                                     |
+| --------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `PI_CLAUDE_DRIVER`                | `cli`          | `cli` or `sdk`                                                                                              |
+| `PI_CLAUDE_AUTH`                  | `claude-login` | Official login, or explicitly selected `api-key` billing                                                    |
+| `PI_CLAUDE_EXECUTABLE`            | Driver default | Published Claude executable path                                                                            |
+| `PI_CLAUDE_EFFORT`                | Unset          | Model-supported `low`, `medium`, `high`, `xhigh` or `max`                                                   |
+| `PI_CLAUDE_MAX_TURNS`             | Unset          | Positive integer Claude turn bound                                                                          |
+| `PI_CLAUDE_MAX_OUTPUT_TOKENS`     | Unset          | Positive safe integer output cap per Claude response; combined with the host cap using the smaller value    |
+| `PI_CLAUDE_MAX_BUDGET_USD`        | Unset          | Positive Claude budget bound                                                                                |
+| `PI_CLAUDE_TOOL_TIMEOUT_MS`       | `180000`       | Deadline for dispatch after a completed tool proposal and for parked host results                           |
+| `PI_CLAUDE_SHUTDOWN_TIMEOUT_MS`   | `5000`         | Driver shutdown deadline                                                                                    |
+| `PI_CLAUDE_IDLE_CLOSE_MS`         | `600000`       | Close a pi session's Claude process after this many idle milliseconds. `0` keeps it until the session ends. |
+| `PI_CLAUDE_INTERNAL_TOOLS`        | `[]`           | JSON array of explicitly enabled Claude tool names                                                          |
+| `PI_CLAUDE_MCP_CONFIG`            | Unset          | File containing explicitly configured user `mcpServers`                                                     |
+| `PI_CLAUDE_FORWARD_SUBAGENT_TEXT` | `0`            | Set `1` to forward attributed Claude subagent text                                                          |
 
 Login mode rejects inherited API-key, auth-token, endpoint and cloud-provider overrides rather than silently changing authentication or billing. `CLAUDE_CONFIG_DIR` can select the official runtime's existing login configuration. API-key mode requires `ANTHROPIC_API_KEY`; `ANTHROPIC_BASE_URL` is optional in that mode. No token is copied into host auth storage.
 

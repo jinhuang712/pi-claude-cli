@@ -43,7 +43,9 @@ export function registerPiAdapter(
   assertPiVersion(VERSION);
   const configuration = options.configuration ?? readRuntimeConfiguration();
   const factory = options.runtimeFactory ?? createConfiguredRuntime;
-  const lifecycle = new PiLifecycle(() => factory(configuration));
+  const lifecycle = new PiLifecycle(() => factory(configuration), {
+    idleCloseMs: configuration.idleCloseMs,
+  });
   lifecycle.register(pi);
   pi.registerProvider(PROVIDER_ID, {
     baseUrl: PROVIDER_ID,
@@ -83,6 +85,7 @@ export function registerPiAdapter(
             );
           state.active = true;
           ownsRound = true;
+          lifecycle.cancelIdle(state);
           await state.cleanup;
           generation = state.generation;
           const hostSignal = streamOptions.signal ?? state.contextSignal;
@@ -252,6 +255,7 @@ export function registerPiAdapter(
           if (ownsRound && state) {
             state.active = false;
             if (!state.parked) lifecycle.detach(state);
+            lifecycle.touch(state);
           }
         }
       })();
